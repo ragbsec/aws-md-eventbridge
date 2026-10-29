@@ -102,6 +102,7 @@ SECONDARY_REGION=us-east-2 ENABLE_GLOBAL_ENDPOINT=true \
 
 | Audience / topic | Doc |
 | --- | --- |
+| **Fresh user — start here (ordered onboarding path)** | [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) |
 | **New to the repo — read first** | [`docs/FOLDER_STRUCTURE.md`](docs/FOLDER_STRUCTURE.md) |
 | Architecture, security, monitoring (multi-region) | [`docs/PRODUCTION_ARCHITECTURE.md`](docs/PRODUCTION_ARCHITECTURE.md) |
 | System architects (base lab) | [`docs/ARCHITECT_GUIDE.md`](docs/ARCHITECT_GUIDE.md) |
@@ -110,6 +111,7 @@ SECONDARY_REGION=us-east-2 ENABLE_GLOBAL_ENDPOINT=true \
 | **CI/CD, OIDC, global-endpoint gotchas, ops** | [`docs/CICD_AND_OPERATIONS.md`](docs/CICD_AND_OPERATIONS.md) |
 | **Security model + per-app onboarding contract** | [`docs/SECURITY_AND_ONBOARDING.md`](docs/SECURITY_AND_ONBOARDING.md) |
 | **Event schema onboarding (multi-team)** | [`docs/SCHEMA_ONBOARDING.md`](docs/SCHEMA_ONBOARDING.md) |
+| **Pre-flight checklist (new AWS account, before deploy)** | [`docs/PREFLIGHT_CHECKLIST.md`](docs/PREFLIGHT_CHECKLIST.md) |
 | Pre-deploy account preflight (AI prompt) | [`docs/PREDEPLOY_PREFLIGHT_PROMPT.md`](docs/PREDEPLOY_PREFLIGHT_PROMPT.md) |
 | TLS / cipher posture | [`docs/TLS_POLICY.md`](docs/TLS_POLICY.md) |
 | Free-tier / sandbox safety | [`docs/FREE_TIER.md`](docs/FREE_TIER.md) |

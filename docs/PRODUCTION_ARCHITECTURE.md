@@ -96,6 +96,32 @@ Reusable logic lives in `modules/eventbridge-platform/` and
 
 ## 4. Security
 
+### Deploy identity & IAM trust model
+
+The stack has two distinct kinds of IAM: **deploy identities** (what runs
+`terraform apply` — *you* assume these) and **runtime service roles** (what AWS
+services assume at runtime — Terraform creates them, you never assume them).
+
+![IAM trust and assume-role map](img/iam-trust-map.svg)
+
+- **① Deploy identities** (`bootstrap/`): a static deployer IAM user (sandbox
+  default), an assumable **deployer role** (`sts:AssumeRole` by a named
+  principals list + optional external id — the **cross-account hop**), and a
+  **GitLab OIDC role** (`sts:AssumeRoleWithWebIdentity`, trust scoped to a
+  project + ref). All three attach the **same** least-privilege policy.
+- **② Runtime service roles**: the endpoint-replication role
+  (`events.amazonaws.com`), the optional forward role (`events`), the optional
+  scheduler role (`scheduler`), and the producer/consumer/health Lambda exec
+  roles (`lambda`) — each assumed by its **service principal**, not you.
+- **③ Cross-account event plane**: resource policies + KMS grants, **not** an
+  assume-role you perform — a trusted account's bus policy + CMK access to
+  publish inbound, or the forward role to send outbound.
+
+> **Deploying from another account = exactly ONE assume-role**: `sts:AssumeRole`
+> into the target account's **deployer role** (`enable_deployer_role=true`, name
+> your principal, optionally an `sts:ExternalId`). See
+> `docs/SECURITY_AND_ONBOARDING.md` for the full tables.
+
 ### Encryption at rest — customer-managed KMS (verified live)
 
 A **multi-region KMS CMK** (`alias/eb-prod/eventbridge`, `mrk-…`) with **key

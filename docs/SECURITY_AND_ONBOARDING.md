@@ -22,6 +22,55 @@ Security here is two layers: what the **platform enforces for everyone**
 | **Dual dead-letter (delivery + processing)** | EventBridge target DLQ catches undeliverable events; a separate per-consumer failure queue + Lambda `on_failure` catches events whose handler THROWS — neither class is silently dropped | `modules/event-application` |
 | **Cross-account KMS scoping** | Trusted accounts/org may use the CMK ONLY via EventBridge (`kms:ViaService` condition), not arbitrary KMS ops | `platform-primary`/`platform-secondary` main.tf |
 
+### Deploy identity & IAM trust model
+
+Two distinct kinds of IAM live in this stack, and conflating them is the usual
+mistake:
+
+- **Deploy identities** — *what runs `terraform apply`*. You assume one of these.
+- **Runtime service roles** — *what AWS services assume at runtime*. Terraform
+  creates them in the account; you never assume them.
+
+![IAM trust and assume-role map](img/iam-trust-map.svg)
+
+**① Deploy identities** (`bootstrap/`) — three interchangeable identities, all
+attaching the **same** least-privilege deployer policy so they can never drift:
+
+| Identity | Resource | Trust / auth | Gated by |
+|---|---|---|---|
+| Deployer IAM user (default) | `aws_iam_user.deployer` + access key | static key | always on |
+| Deployer **role** (assume) | `aws_iam_role.deployer_role` | `sts:AssumeRole` by a **named principals list** + optional `sts:ExternalId` | `enable_deployer_role=true` |
+| GitLab OIDC role | `aws_iam_role.gitlab_deployer` + OIDC provider | `sts:AssumeRoleWithWebIdentity`, trust conditioned on `:aud`=GitLab URL and `:sub`=`project_path:…:ref:main` | `enable_gitlab_oidc=true` |
+
+The shared policy grants S3 state access; `events/scheduler/schemas/pipes:*`;
+`lambda/sqs/sns/logs/cloudwatch/kms/route53/access-analyzer:*`; and IAM
+**role+policy management only** (incl. `iam:PassRole`,
+`iam:CreateServiceLinkedRole`) — **no** user/group/account-admin rights.
+
+**② Runtime service roles** — assumed by a **service principal**, not you:
+
+| Role | Assumed by | Grants |
+|---|---|---|
+| `…-endpoint-replication` | `events.amazonaws.com` | `events:PutEvents` on both buses; `PutRule/PutTargets/…` on `rule/*`; `iam:PassRole` (self); KMS on both CMKs (+ `aws_kms_grant`) |
+| `…-forward` (optional) | `events.amazonaws.com` | `events:PutEvents` on remote cross-account bus ARNs |
+| `…-scheduler-role` (optional) | `scheduler.amazonaws.com` | `lambda:InvokeFunction` on producer (`aws:SourceAccount` guard) |
+| producer / consumer / health exec | `lambda.amazonaws.com` | `events:PutEvents`+KMS (both regions), SQS on-failure + KMS, CloudWatch Logs |
+
+**③ Cross-account event plane** — resource policies + grants, **not** an
+assume-role you perform:
+
+- **Inbound** (account Z publishes to your bus): `aws_cloudwatch_event_bus_policy`
+  allows `events:PutEvents` from `arn:aws:iam::<Z>:root` (or an
+  `aws:PrincipalOrgID` condition), **plus KMS access to your CMK** (the bus is
+  encrypted).
+- **Outbound** (forward to Z's bus): the `…-forward` role above; Z must allow
+  your account in *its* bus policy.
+
+> **Deploying from another account = exactly ONE assume-role:** `sts:AssumeRole`
+> into the target account's **deployer role** (set `enable_deployer_role=true`,
+> name your principal, optionally an external id). Everything in ② is a service
+> assuming a role locally; everything in ③ is a resource policy.
+
 ---
 
 ## 2. Per-app onboarding security checklist (the contract)

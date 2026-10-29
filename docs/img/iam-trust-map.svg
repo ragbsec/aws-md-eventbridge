@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 760" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" role="img" aria-label="IAM trust and assume-role map for the EventBridge Option C deployment">
+  <defs>
+    <marker id="solid" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0891b2"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="760" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="24" y="34" font-size="20" font-weight="700" fill="#0f172a">IAM trust &amp; assume-role map — EventBridge Option C</text>
+  <text x="24" y="56" font-size="13" fill="#64748b">Deploy identities (you assume) vs runtime service roles (AWS services assume) · arrows point principal → role</text>
+
+  <!-- Legend -->
+  <line x1="24" y1="76" x2="52" y2="76" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="58" y="80" font-size="11.5" fill="#64748b">sts:AssumeRole (you / human / CI)</text>
+  <line x1="280" y1="76" x2="308" y2="76" stroke="#0891b2" stroke-width="2.5" stroke-dasharray="5 4"/>
+  <text x="314" y="80" font-size="11.5" fill="#64748b">service assumes at runtime</text>
+  <rect x="520" y="70" width="12" height="12" fill="#fef3c7" stroke="#d97706"/>
+  <text x="538" y="80" font-size="11.5" fill="#64748b">cross-account trust</text>
+
+  <!-- ===== TOP: callers ===== -->
+  <g>
+    <rect x="24" y="100" width="290" height="52" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="169" y="124" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">👤 Human / IAM user</text>
+    <text x="169" y="141" font-size="10.5" fill="#64748b" text-anchor="middle">in account X (or local)</text>
+
+    <rect x="345" y="100" width="290" height="52" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="490" y="124" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">🔑 Static access key</text>
+    <text x="490" y="141" font-size="10.5" fill="#64748b" text-anchor="middle">sandbox default</text>
+
+    <rect x="666" y="100" width="290" height="52" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="811" y="124" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">🦊 GitLab CI job</text>
+    <text x="811" y="141" font-size="10.5" fill="#64748b" text-anchor="middle">presents OIDC JWT</text>
+  </g>
+
+  <!-- assume arrows down to deploy identities -->
+  <line x1="169" y1="152" x2="169" y2="196" stroke="#2563eb" stroke-width="2.5" marker-end="url(#solid)"/>
+  <line x1="490" y1="152" x2="490" y2="196" stroke="#94a3b8" stroke-width="2" marker-end="url(#solid)"/>
+  <line x1="811" y1="152" x2="811" y2="196" stroke="#2563eb" stroke-width="2.5" marker-end="url(#solid)"/>
+  <text x="200" y="176" font-size="10.5" fill="#2563eb">sts:AssumeRole  ·  sts:AssumeRoleWithWebIdentity   ↓ into TARGET ACCOUNT Y</text>
+
+  <!-- ===== DEPLOY IDENTITIES ===== -->
+  <rect x="24" y="200" width="932" height="150" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="38" y="222" font-size="13" font-weight="700" fill="#0f172a">① DEPLOY IDENTITIES</text>
+  <text x="212" y="222" font-size="11.5" fill="#64748b">— created by bootstrap/, all attach the SAME least-privilege deployer policy</text>
+
+  <!-- user -->
+  <rect x="38" y="234" width="290" height="74" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="50" y="254" font-size="12.5" font-weight="700" fill="#0f172a">deployer IAM user</text>
+  <text x="50" y="270" font-size="10" fill="#64748b">aws_iam_user.deployer · default</text>
+  <text x="50" y="288" font-size="11" fill="#0f172a">Trust: none (access key)</text>
+  <text x="50" y="302" font-size="10" fill="#16a34a">always on</text>
+
+  <!-- role (cross-account) -->
+  <rect x="345" y="234" width="290" height="74" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="357" y="254" font-size="12.5" font-weight="700" fill="#0f172a">deployer ROLE</text>
+  <text x="357" y="270" font-size="10" fill="#64748b">aws_iam_role.deployer_role</text>
+  <text x="357" y="288" font-size="11" fill="#0f172a">Trust: named principals list + optional ExternalId</text>
+  <text x="357" y="302" font-size="10" fill="#b45309" font-weight="700">★ the cross-account hop · enable_deployer_role=true</text>
+
+  <!-- oidc -->
+  <rect x="652" y="234" width="290" height="74" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="664" y="254" font-size="12.5" font-weight="700" fill="#0f172a">GitLab OIDC role</text>
+  <text x="664" y="270" font-size="10" fill="#64748b">aws_iam_role.gitlab_deployer</text>
+  <text x="664" y="288" font-size="11" fill="#0f172a">Trust: Federated · aud=GitLab · sub=project:ref</text>
+  <text x="664" y="302" font-size="10" fill="#0891b2">enable_gitlab_oidc=true</text>
+
+  <text x="38" y="332" font-size="10" fill="#64748b">Shared policy: S3 state · events/scheduler/schemas/pipes:* · lambda/sqs/sns/logs/cloudwatch/kms/route53/access-analyzer:* ·</text>
+  <text x="38" y="345" font-size="10" fill="#64748b">IAM role+policy mgmt only (incl. iam:PassRole, CreateServiceLinkedRole) — NO user/group/account-admin.</text>
+
+  <!-- apply arrow -->
+  <line x1="490" y1="350" x2="490" y2="392" stroke="#0891b2" stroke-width="2" marker-end="url(#dash)"/>
+  <text x="500" y="376" font-size="10.5" fill="#0891b2">terraform apply (as the deploy identity) CREATES the roles below</text>
+
+  <!-- ===== RUNTIME SERVICE ROLES ===== -->
+  <rect x="24" y="396" width="932" height="176" rx="10" fill="#ffffff" stroke="#0891b2" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="38" y="418" font-size="13" font-weight="700" fill="#0f172a">② RUNTIME SERVICE ROLES</text>
+  <text x="248" y="418" font-size="11.5" fill="#64748b">— you never assume these; the service principal does, at runtime</text>
+
+  <!-- replication -->
+  <rect x="38" y="430" width="448" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="50" y="448" font-size="10.5" font-weight="700" fill="#0891b2">events.amazonaws.com ⇢</text>
+  <text x="50" y="464" font-size="12.5" font-weight="700" fill="#0f172a">endpoint-replication role</text>
+  <text x="50" y="480" font-size="9.5" fill="#64748b">platform-global · PutEvents both buses + PutRule/Targets on rule/* + PassRole(self) + KMS both CMKs</text>
+
+  <!-- forward -->
+  <rect x="494" y="430" width="448" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="506" y="448" font-size="10.5" font-weight="700" fill="#0891b2">events.amazonaws.com ⇢</text>
+  <text x="506" y="464" font-size="12.5" font-weight="700" fill="#0f172a">forward role (optional)</text>
+  <text x="506" y="480" font-size="9.5" fill="#64748b">module · PutEvents on remote cross-account bus ARNs</text>
+
+  <!-- scheduler -->
+  <rect x="38" y="500" width="448" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="50" y="518" font-size="10.5" font-weight="700" fill="#0891b2">scheduler.amazonaws.com ⇢</text>
+  <text x="50" y="534" font-size="12.5" font-weight="700" fill="#0f172a">scheduler role (optional)</text>
+  <text x="50" y="550" font-size="9.5" fill="#64748b">app · lambda:InvokeFunction on producer · aws:SourceAccount guard</text>
+
+  <!-- lambda exec -->
+  <rect x="494" y="500" width="448" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="506" y="518" font-size="10.5" font-weight="700" fill="#0891b2">lambda.amazonaws.com ⇢</text>
+  <text x="506" y="534" font-size="12.5" font-weight="700" fill="#0f172a">producer · consumer · health exec roles</text>
+  <text x="506" y="550" font-size="9.5" fill="#64748b">module · PutEvents+KMS (both regions) · SQS on-failure+KMS · logs</text>
+
+  <!-- ===== CROSS-ACCOUNT EVENT PLANE ===== -->
+  <rect x="24" y="584" width="932" height="100" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="38" y="606" font-size="13" font-weight="700" fill="#0f172a">③ CROSS-ACCOUNT EVENT PLANE</text>
+  <text x="300" y="606" font-size="11.5" fill="#64748b">— resource policies + grants, NOT an assume-role you perform</text>
+  <text x="38" y="630" font-size="11" fill="#0f172a">Inbound (account Z publishes): aws_cloudwatch_event_bus_policy allows events:PutEvents from arn:aws:iam::&lt;Z&gt;:root</text>
+  <text x="38" y="646" font-size="11" fill="#0f172a">or an aws:PrincipalOrgID condition — PLUS KMS access to your CMK (bus is encrypted).</text>
+  <text x="38" y="668" font-size="11" fill="#0f172a">Outbound (forward to Z's bus): the forward role above; Z must allow your account in ITS bus policy.</text>
+
+  <!-- footer -->
+  <text x="24" y="712" font-size="11" font-weight="700" fill="#0f172a">Bottom line:</text>
+  <text x="96" y="712" font-size="11" fill="#334155">deploying from another account = exactly ONE assume-role — sts:AssumeRole into the target account's deployer ROLE (yellow).</text>
+  <text x="24" y="730" font-size="11" fill="#334155">Everything in ② is a service assuming a role locally. Everything in ③ is a resource policy, not an assume-role.</text>
+</svg>
