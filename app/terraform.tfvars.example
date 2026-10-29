@@ -1,0 +1,13 @@
+# Example app-layer variables. Copy to terraform.tfvars and edit, or pass with
+# -var. Scripts already pass region + deployer_profile for you.
+
+# region           = "us-east-1"        # us-east-1 or us-west-2 only (sandbox)
+# name_prefix      = "eb-lab"
+# bus_name         = "eb-lab-orders"
+# event_source     = "lab.orders"
+# log_retention_days = 7
+# lambda_memory_mb = 128                 # 128 keeps you in the free tier (max 2048)
+
+# --- Scheduling (OFF by default; opt in to run the producer on a timer) ------
+# enable_schedule     = false
+# schedule_expression = "rate(1 hour)"

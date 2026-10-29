@@ -1,0 +1,8 @@
+{
+  "orderId": "not-a-uuid-but-string-ok",
+  "product": "",
+  "quantity": 0,
+  "amount": -5,
+  "placedAt": "2026-10-27T23:05:29Z",
+  "unexpectedField": "should be rejected by additionalProperties=false"
+}

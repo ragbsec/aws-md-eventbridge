@@ -1,0 +1,29 @@
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfplan
+*.plan
+
+# Lambda build artifacts
+app/.build/
+
+# Local runtime: rendered backend config + deployer SECRETS (never commit)
+.runtime/
+
+# OS
+.DS_Store
+
+# Local tooling / caches
+.bin/
+.tf-plugin-cache/
+.tftmp/
+.tflint-min.hcl
+graft/.cache/
+
+# Build artifacts
+**/.build/
+src/lambda/.build-producer/
+platform-global/builds/

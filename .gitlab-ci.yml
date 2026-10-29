@@ -1,0 +1,227 @@
+###############################################################################
+# GitLab CI/CD — EventBridge multi-region platform
+#
+# AUTH: GitLab OIDC -> AWS STS AssumeRoleWithWebIdentity (no static keys).
+#   Set these CI/CD variables (Settings > CI/CD > Variables), protected+masked:
+#     TF_DEPLOYER_ROLE_ARN   = output gitlab_deployer_role_arn from bootstrap
+#     TF_STATE_BUCKET        = output state_bucket_name from bootstrap
+#   Region/feature inputs are TF_VAR_* below (override per environment).
+#
+# PROVIDERS ACROSS REGIONS: unchanged from local. The root providers
+#   aws.primary / aws.secondary read region from TF_VAR_primary_region /
+#   TF_VAR_secondary_region, and credentials from the single assumed-role
+#   session exported below (one STS session serves both regions). profile is
+#   empty in CI, so the providers fall back to these env-var credentials.
+#
+# LAYER SEPARATION: platform applies first (bus/KMS/rules/monitoring), then
+#   application (Lambdas/DLQ/SNS/targets) reads the platform's remote state.
+#   Each apply is a MANUAL job = the PR/MR review + human approval gate.
+###############################################################################
+
+image: hashicorp/terraform:1.9
+
+variables:
+  # ---- deploy inputs (override in Settings or per-environment) -------------
+  TF_VAR_primary_region: "us-east-1"
+  TF_VAR_secondary_region: "us-east-2"          # us-west-2 for a sandbox pipeline
+  TF_VAR_enable_global_endpoint: "true"
+  TF_VAR_health_check_domain: ""                # set to your prod /health domain
+  TF_VAR_deployer_profile: ""                   # EMPTY in CI -> env-var creds
+  TF_VAR_name_prefix: "eb-prod"
+  # ---- terraform behaviour -------------------------------------------------
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_DEFAULT_REGION: "${TF_VAR_primary_region}"
+  PLATFORM_DIR: "platform"
+  APPLICATION_DIR: "application"
+
+stages:
+  - validate
+  - contract-test
+  - plan
+  - apply-platform
+  - plan-application
+  - apply-application
+
+# ---------------------------------------------------------------------------
+# OIDC: request a GitLab id_token addressed to AWS, exchange it for short-lived
+# credentials, export them. Both provider aliases + the S3 backend read these.
+# ---------------------------------------------------------------------------
+.oidc_auth:
+  id_tokens:
+    AWS_ID_TOKEN:
+      aud: "https://gitlab.com"                 # self-managed: your instance URL
+  before_script:
+    - apk add --no-cache aws-cli jq >/dev/null
+    - |
+      CREDS=$(aws sts assume-role-with-web-identity \
+        --role-arn "$TF_DEPLOYER_ROLE_ARN" \
+        --role-session-name "gitlab-${CI_PIPELINE_ID}-${CI_JOB_ID}" \
+        --web-identity-token "$AWS_ID_TOKEN" \
+        --duration-seconds 3600 \
+        --query 'Credentials' --output json)
+    - export AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r .AccessKeyId)
+    - export AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r .SecretAccessKey)
+    - export AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r .SessionToken)
+    - aws sts get-caller-identity          # prove the session before Terraform
+  cache:
+    key: "tf-plugins"
+    paths:
+      - .terraform.d/plugin-cache
+  variables:
+    TF_PLUGIN_CACHE_DIR: "${CI_PROJECT_DIR}/.terraform.d/plugin-cache"
+
+# Backend init helper: profile left EMPTY so the backend uses the OIDC env creds.
+.tf_init: &tf_init
+  - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+  - >
+    terraform -chdir="$LAYER_DIR" init -input=false
+    -backend-config="bucket=${TF_STATE_BUCKET}"
+    -backend-config="region=${TF_VAR_primary_region}"
+    -backend-config="profile="
+
+###############################################################################
+# validate — fmt + validate + tflint on every layer (no creds needed)
+###############################################################################
+validate:
+  stage: validate
+  before_script:
+    - terraform fmt -check -recursive
+  script:
+    - |
+      for LAYER in bootstrap platform application modules/eventbridge-platform modules/event-application; do
+        echo "== validate $LAYER =="
+        terraform -chdir="$LAYER" init -backend=false -input=false
+        terraform -chdir="$LAYER" validate
+      done
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+###############################################################################
+# contract-test — validate event payloads against the registered schema, and
+# check schema changes stay backward-compatible. Fails the pipeline on a
+# breaking event contract change (enterprise guard). No AWS creds needed.
+###############################################################################
+contract-test:
+  stage: contract-test
+  image: python:3.12-slim
+  script:
+    - echo "== every registered schema must be valid JSON and loadable =="
+    - |
+      for s in schemas/*.json; do
+        python3 -c "import json,sys; json.load(open('$s')); print('OK schema', '$s')" || exit 1
+      done
+    - echo "== per-schema sample validation (schemas/samples/<schema>/*.json) =="
+    - |
+      # Each schema may have a samples dir: valid-*.json must PASS, invalid-*.json must FAIL.
+      rc=0
+      for schema in schemas/*.json; do
+        base=$(basename "$schema" .json)
+        sdir="schemas/samples/$base"
+        [ -d "$sdir" ] || continue
+        for v in "$sdir"/valid-*.json; do
+          [ -e "$v" ] || continue
+          python3 scripts/contract_test.py validate "$schema" "$v" || rc=1
+        done
+        for iv in "$sdir"/invalid-*.json; do
+          [ -e "$iv" ] || continue
+          if python3 scripts/contract_test.py validate "$schema" "$iv"; then
+            echo "ERROR: invalid sample $iv passed — guard broken"; rc=1
+          else
+            echo "OK: $iv correctly rejected"
+          fi
+        done
+      done
+      exit $rc
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+###############################################################################
+# plan platform — runs on MRs and default branch; artifact drives the apply
+###############################################################################
+plan:platform:
+  extends: .oidc_auth
+  stage: plan
+  variables:
+    LAYER_DIR: "${PLATFORM_DIR}"
+  script:
+    - *tf_init
+    - terraform -chdir="$PLATFORM_DIR" plan -out=platform.tfplan
+    - terraform -chdir="$PLATFORM_DIR" show -no-color platform.tfplan > platform.plan.txt
+  artifacts:
+    paths:
+      - ${PLATFORM_DIR}/platform.tfplan
+      - ${PLATFORM_DIR}/platform.plan.txt
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+###############################################################################
+# apply platform — MANUAL (human approval) + default branch only
+###############################################################################
+apply:platform:
+  extends: .oidc_auth
+  stage: apply-platform
+  variables:
+    LAYER_DIR: "${PLATFORM_DIR}"
+  script:
+    - *tf_init
+    - terraform -chdir="$PLATFORM_DIR" apply -input=false platform.tfplan
+    - terraform -chdir="$PLATFORM_DIR" output -json > platform.outputs.json
+  artifacts:
+    paths:
+      - platform.outputs.json
+    expire_in: 30 days
+  dependencies:
+    - plan:platform
+  environment:
+    name: production/platform
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  allow_failure: false
+
+###############################################################################
+# plan application — reads the platform state just applied
+###############################################################################
+plan:application:
+  extends: .oidc_auth
+  stage: plan-application
+  variables:
+    LAYER_DIR: "${APPLICATION_DIR}"
+    TF_VAR_state_bucket: "${TF_STATE_BUCKET}"
+  script:
+    - *tf_init
+    - terraform -chdir="$APPLICATION_DIR" plan -out=application.tfplan
+    - terraform -chdir="$APPLICATION_DIR" show -no-color application.tfplan > application.plan.txt
+  artifacts:
+    paths:
+      - ${APPLICATION_DIR}/application.tfplan
+      - ${APPLICATION_DIR}/application.plan.txt
+    expire_in: 7 days
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+###############################################################################
+# apply application — MANUAL (human approval) + default branch only
+###############################################################################
+apply:application:
+  extends: .oidc_auth
+  stage: apply-application
+  variables:
+    LAYER_DIR: "${APPLICATION_DIR}"
+    TF_VAR_state_bucket: "${TF_STATE_BUCKET}"
+  script:
+    - *tf_init
+    - terraform -chdir="$APPLICATION_DIR" apply -input=false application.tfplan
+  dependencies:
+    - plan:application
+  environment:
+    name: production/application
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  allow_failure: false

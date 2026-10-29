@@ -1,0 +1,5 @@
+# The global-endpoint PutEvents path (with EndpointId) signs requests with
+# SigV4a (multi-region signatures), which botocore only supports when the AWS
+# Common Runtime is present. Without this the producer raises
+# MissingDependencyException: "Use pip install botocore[crt]".
+awscrt>=0.19.0

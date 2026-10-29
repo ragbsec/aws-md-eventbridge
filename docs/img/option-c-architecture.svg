@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 760" font-family="ui-sans-serif,system-ui,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-label="Option C cross-root multi-region EventBridge deployment architecture">
+  <style>
+    .bg    { fill:#ffffff; }
+    .title { fill:#0f172a; font-weight:700; }
+    .sub   { fill:#64748b; }
+    .card  { fill:#f8fafc; stroke:#cbd5e1; }
+    .root  { fill:#f8fafc; stroke:#2563eb; stroke-width:2; }
+    .txt   { fill:#0f172a; }
+    .muted { fill:#64748b; }
+    .mono  { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .state { fill:#fef9c3; stroke:#ca8a04; }
+    .accent{ fill:#2563eb; }
+    .info  { fill:#0369a1; }
+    .ok    { fill:#15803d; }
+    .danger{ fill:#b91c1c; }
+    .order { fill:#f1f5f9; stroke:#cbd5e1; }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="980" height="760" rx="0"/>
+
+  <!-- header -->
+  <text class="title" x="24" y="34" font-size="18">EventBridge Platform — Option C (per-region roots, independent state)</text>
+  <text class="sub" x="24" y="54" font-size="12">AWS account 329863774956 · multi-region KMS wired via terraform_remote_state · apply order top → bottom</text>
+
+  <!-- legend -->
+  <line x1="24" y1="72" x2="48" y2="72" stroke="#2563eb" stroke-width="2"/>
+  <text class="muted" x="54" y="76" font-size="11">apply / dependency order</text>
+  <line x1="230" y1="72" x2="254" y2="72" stroke="#0369a1" stroke-width="2" stroke-dasharray="5 4"/>
+  <text class="muted" x="260" y="76" font-size="11">remote_state read (ARN handoff)</text>
+  <rect class="state" x="470" y="66" width="12" height="12" rx="2"/>
+  <text class="muted" x="488" y="76" font-size="11">Terraform state (S3)</text>
+
+  <!-- bootstrap -->
+  <rect class="card" x="24" y="92" width="932" height="64" rx="10"/>
+  <text class="title" x="40" y="116" font-size="13">0 · bootstrap/</text>
+  <text class="muted" x="135" y="116" font-size="11">— operator (cloud_user) · local state · run once</text>
+  <text class="muted" x="700" y="116" font-size="11">S3 state bucket · deployer IAM · GitLab OIDC</text>
+  <text class="muted" x="40" y="138" font-size="11">Creates the S3 bucket that holds every other layer's state, and the scoped deployer identity the roots below assume.</text>
+
+  <text class="accent" x="490" y="178" font-size="20" text-anchor="middle">&#8595;</text>
+
+  <!-- three platform roots -->
+  <!-- 1a primary -->
+  <rect class="root" x="24" y="190" width="296" height="196" rx="10"/>
+  <text class="title" x="40" y="214" font-size="13">1a · platform-primary/</text>
+  <text class="muted" x="40" y="232" font-size="11">us-east-1 · single aws provider</text>
+  <text class="txt" x="40" y="254" font-size="11">🔑 KMS primary (multi-region, rotation on)</text>
+  <text class="txt" x="40" y="272" font-size="11">🚌 bus eb-prod-orders</text>
+  <text class="txt" x="40" y="290" font-size="11">📏 routing rule + archive</text>
+  <text class="txt" x="40" y="308" font-size="11">📊 logs · alarms · dashboard · SNS</text>
+  <text class="txt" x="40" y="326" font-size="11">🛡️ IAM Access Analyzer</text>
+  <text class="txt" x="40" y="344" font-size="11">📜 schema registry (schemas/*.json)</text>
+  <rect class="state" x="40" y="356" width="264" height="20" rx="4"/>
+  <text class="txt mono" x="48" y="370" font-size="9.5">state: platform-primary/terraform.tfstate</text>
+
+  <!-- 1b secondary -->
+  <rect class="root" x="342" y="190" width="296" height="196" rx="10"/>
+  <text class="title" x="358" y="214" font-size="13">1b · platform-secondary/</text>
+  <text class="muted" x="358" y="232" font-size="11">us-west-2 · single aws provider</text>
+  <text class="txt" x="358" y="254" font-size="11">🔑 KMS replica (shared key material)</text>
+  <text class="txt" x="358" y="272" font-size="11">🚌 bus eb-prod-orders (same name)</text>
+  <text class="txt" x="358" y="290" font-size="11">📏 routing rule + archive</text>
+  <text class="txt" x="358" y="308" font-size="11">📊 logs · alarms · dashboard · SNS</text>
+  <text class="txt" x="358" y="326" font-size="11">📜 schema registry (same schemas)</text>
+  <text class="info" x="358" y="346" font-size="10">⇠ reads primary.kms_key_arn</text>
+  <rect class="state" x="358" y="356" width="264" height="20" rx="4"/>
+  <text class="txt mono" x="366" y="370" font-size="9.5">state: platform-secondary/terraform.tfstate</text>
+
+  <!-- 1c global -->
+  <rect class="root" x="660" y="190" width="296" height="196" rx="10"/>
+  <text class="title" x="676" y="214" font-size="13">1c · platform-global/</text>
+  <text class="muted" x="676" y="232" font-size="11">both regions · primary + secondary</text>
+  <text class="txt" x="676" y="254" font-size="11">🌐 global endpoint (refs BOTH buses)</text>
+  <text class="txt" x="676" y="272" font-size="11">❤️ Route 53 health check + Lambda</text>
+  <text class="txt" x="676" y="290" font-size="11">🔁 replication IAM role (PutEvents ×2)</text>
+  <text class="txt" x="676" y="308" font-size="11">🗝️ KMS grants on BOTH CMKs</text>
+  <text class="info" x="676" y="330" font-size="10">⇠ reads both bus_arn + kms_key_arn</text>
+  <rect class="state" x="676" y="356" width="264" height="20" rx="4"/>
+  <text class="txt mono" x="684" y="370" font-size="9.5">state: platform-global/terraform.tfstate</text>
+
+  <!-- remote_state dashed arrows between roots -->
+  <!-- secondary <- primary -->
+  <line x1="342" y1="300" x2="320" y2="300" stroke="#0369a1" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+  <!-- global <- primary (long curve under) -->
+  <path d="M 172 386 C 172 420, 808 420, 808 386" fill="none" stroke="#0369a1" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+  <!-- global <- secondary -->
+  <path d="M 490 386 C 490 408, 808 408, 808 386" fill="none" stroke="#0369a1" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+  <text class="info" x="490" y="440" font-size="10" text-anchor="middle">platform-global reads primary + secondary state (bus ARNs + CMK ARNs)</text>
+
+  <text class="accent" x="490" y="470" font-size="20" text-anchor="middle">&#8595;</text>
+
+  <!-- application -->
+  <rect class="card" x="24" y="482" width="932" height="92" rx="10"/>
+  <text class="title" x="40" y="506" font-size="13">2 · application/</text>
+  <text class="muted" x="150" y="506" font-size="11">— deployer · both regions · app-team owned · runs often</text>
+  <text class="info" x="700" y="506" font-size="10">⇠ reads primary + secondary platform outputs</text>
+  <text class="txt" x="40" y="530" font-size="11">⚙️ producer Lambda (awscrt / SigV4a) · consumer Lambda · DLQ (SQS) · app SNS · rule targets — in EACH region</text>
+  <rect class="state" x="40" y="544" width="300" height="20" rx="4"/>
+  <text class="txt mono" x="48" y="558" font-size="9.5">state: application/terraform.tfstate</text>
+
+  <!-- order footers -->
+  <rect class="order" x="24" y="596" width="456" height="64" rx="8"/>
+  <text class="ok" x="40" y="620" font-size="11" font-weight="700">▶ APPLY order</text>
+  <text class="muted" x="40" y="640" font-size="10.5">bootstrap → platform-primary → platform-secondary →</text>
+  <text class="muted" x="40" y="654" font-size="10.5">platform-global (if global endpoint) → application</text>
+
+  <rect class="order" x="500" y="596" width="456" height="64" rx="8"/>
+  <text class="danger" x="516" y="620" font-size="11" font-weight="700">◀ DESTROY order (reverse)</text>
+  <text class="muted" x="516" y="640" font-size="10.5">application → platform-global → platform-secondary →</text>
+  <text class="muted" x="516" y="654" font-size="10.5">platform-primary → bootstrap</text>
+
+  <!-- footnote -->
+  <text class="muted" x="24" y="692" font-size="10">Each box = one Terraform root with its OWN S3 state (full blast-radius isolation). Dashed lines are read-only terraform_remote_state ARN</text>
+  <text class="muted" x="24" y="706" font-size="10">handoffs resolved at plan/apply time — the only cross-root coupling, all at deploy time, none at runtime. The KMS replica shares key</text>
+  <text class="muted" x="24" y="720" font-size="10">material with the primary so either region decrypts the other's events locally (zero-downtime failover); rotation propagates from the primary.</text>
+
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#0369a1"/>
+    </marker>
+  </defs>
+</svg>

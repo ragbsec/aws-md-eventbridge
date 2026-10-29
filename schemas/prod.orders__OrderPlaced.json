@@ -1,0 +1,24 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "version": "1.0.0",
+    "title": "OrderPlaced"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "OrderPlaced": {
+        "type": "object",
+        "required": ["orderId", "product", "quantity", "amount", "placedAt"],
+        "properties": {
+          "orderId":  { "type": "string", "format": "uuid" },
+          "product":  { "type": "string", "minLength": 1 },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "amount":   { "type": "number", "minimum": 0 },
+          "placedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
