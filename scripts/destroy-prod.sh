@@ -33,40 +33,53 @@ COMMON_SHARE_VARS=(
 if [[ -f "$DEPLOYER_CREDS_FILE" && -f "$BACKEND_HCL" ]]; then
   export AWS_SHARED_CREDENTIALS_FILE="$DEPLOYER_CREDS_FILE"
   STATE_BUCKET="$(tf_output "$BOOTSTRAP_DIR" state_bucket_name 2>/dev/null || echo "")"
+  [[ -n "$STATE_BUCKET" ]] || die "cannot read state_bucket_name from bootstrap state; refusing to destroy blind"
 
+  # Every layer is attempted (so one failure does not hide another), but any
+  # failure is RECORDED and blocks the bootstrap/state-bucket destroy below.
   info "STEP 1 — destroy application"
-  terraform -chdir="$APPLICATION_DIR" init -input=false -reconfigure -backend-config="$BACKEND_HCL" >&2 || true
-  terraform -chdir="$APPLICATION_DIR" destroy -auto-approve -input=false \
+  tf_init_layer application "$APPLICATION_DIR" "$BACKEND_HCL" && tf_destroy_layer application "$APPLICATION_DIR" \
     -var "primary_region=${PRIMARY_REGION}" -var "secondary_region=${SECONDARY_REGION}" \
     -var "deployer_profile=${DEPLOYER_PROFILE}" -var "name_prefix=${NAME_PREFIX}" \
-    -var "state_bucket=${STATE_BUCKET}" >&2 || warn "application destroy reported issues"
+    -var "state_bucket=${STATE_BUCKET}" || true
 
   info "STEP 2 — destroy platform-global (global endpoint + health check)"
-  terraform -chdir="$PLATFORM_GLOBAL_DIR" init -input=false -reconfigure -backend-config="$BACKEND_HCL" >&2 || true
-  terraform -chdir="$PLATFORM_GLOBAL_DIR" destroy -auto-approve -input=false \
+  tf_init_layer platform-global "$PLATFORM_GLOBAL_DIR" "$BACKEND_HCL" && tf_destroy_layer platform-global "$PLATFORM_GLOBAL_DIR" \
     -var "name_prefix=${NAME_PREFIX}" -var "deployer_profile=${DEPLOYER_PROFILE}" \
     -var "primary_region=${PRIMARY_REGION}" -var "secondary_region=${SECONDARY_REGION}" \
-    -var "state_bucket=${STATE_BUCKET}" -var "state_region=${PRIMARY_REGION}" >&2 \
-    || warn "platform-global destroy reported issues (may already be absent if endpoint was never enabled)"
+    -var "state_bucket=${STATE_BUCKET}" -var "state_region=${PRIMARY_REGION}" || true
 
   info "STEP 3 — destroy platform-secondary"
-  terraform -chdir="$PLATFORM_SECONDARY_DIR" init -input=false -reconfigure -backend-config="$BACKEND_HCL" >&2 || true
-  terraform -chdir="$PLATFORM_SECONDARY_DIR" destroy -auto-approve -input=false \
+  tf_init_layer platform-secondary "$PLATFORM_SECONDARY_DIR" "$BACKEND_HCL" && tf_destroy_layer platform-secondary "$PLATFORM_SECONDARY_DIR" \
     "${COMMON_SHARE_VARS[@]}" \
     -var "region=${SECONDARY_REGION}" \
-    -var "state_bucket=${STATE_BUCKET}" -var "state_region=${PRIMARY_REGION}" >&2 \
-    || warn "platform-secondary destroy reported issues"
+    -var "state_bucket=${STATE_BUCKET}" -var "state_region=${PRIMARY_REGION}" || true
 
+  # platform-primary owns the KMS primary key that platform-secondary replicates:
+  # never destroy it while the secondary layer still has resources.
   info "STEP 4 — destroy platform-primary"
-  terraform -chdir="$PLATFORM_PRIMARY_DIR" init -input=false -reconfigure -backend-config="$BACKEND_HCL" >&2 || true
-  terraform -chdir="$PLATFORM_PRIMARY_DIR" destroy -auto-approve -input=false \
-    "${COMMON_SHARE_VARS[@]}" \
-    -var "region=${PRIMARY_REGION}" -var "secondary_region=${SECONDARY_REGION}" >&2 \
-    || warn "platform-primary destroy reported issues"
+  if [[ " ${DESTROY_FAILED[*]:-} " == *" platform-secondary"* ]]; then
+    err "skipping platform-primary: platform-secondary still has resources that depend on it"
+  else
+    tf_init_layer platform-primary "$PLATFORM_PRIMARY_DIR" "$BACKEND_HCL" && tf_destroy_layer platform-primary "$PLATFORM_PRIMARY_DIR" \
+      "${COMMON_SHARE_VARS[@]}" \
+      -var "region=${PRIMARY_REGION}" -var "secondary_region=${SECONDARY_REGION}" || true
+  fi
 
   unset AWS_SHARED_CREDENTIALS_FILE
 else
   warn "no deployer creds/backend; platform/application may already be gone"
+fi
+
+# ---- GUARD: never remove the state bucket while any layer still has resources.
+if [[ "${#DESTROY_FAILED[@]}" -gt 0 ]]; then
+  echo "======================================================================" >&2
+  err "DESTROY INCOMPLETE — failed layer(s): ${DESTROY_FAILED[*]}"
+  err "Bootstrap (state bucket + deployer user) was NOT destroyed, so state is intact."
+  err "Fix the cause (see terraform output above) and re-run this script — it is idempotent."
+  err "Interrupted earlier and see 'state is locked'?  Re-run with FORCE_UNLOCK=1."
+  echo "======================================================================" >&2
+  exit 1
 fi
 
 info "STEP 5 — destroy bootstrap (operator)"
@@ -89,6 +102,12 @@ terraform -chdir="$BOOTSTRAP_DIR" destroy -auto-approve -input=false \
   -var "state_bucket_name=${STATE_BUCKET_NAME:-}" >&2
 
 rm -f "$DEPLOYER_CREDS_FILE" "$BACKEND_HCL" "${RUNTIME_DIR}"/*.json 2>/dev/null || true
+
+# ---- PROOF: read-only sweep of both regions + global; fails if anything remains.
+info "STEP 6 — verifying nothing is left behind"
+bash "${LAB_ROOT}/scripts/leftover-check.sh" \
+  || die "destroy finished but leftovers remain (listed above) — NOT clean; remove them before ending the session"
+
 echo "======================================================================"
-ok "PRODUCTION LAB FULLY DESTROYED"
+ok "PRODUCTION LAB FULLY DESTROYED (verified)"
 echo "======================================================================"

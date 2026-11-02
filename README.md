@@ -59,7 +59,7 @@ STATE_BUCKET_NAME=my-existing-tfstate-bucket ./scripts/create.sh
 
 ## Requirements
 
-- Terraform ≥ 1.5, AWS CLI (configured `default` profile), `jq`
+- Terraform ≥ 1.10, AWS CLI (configured `default` profile), `jq`
 - AWS provider **≥ 6.28** (required by the EventBridge module v4.3.2; pinned)
 - Region: **us-east-1** or **us-west-2** only (sandbox rule)
 

@@ -19,7 +19,7 @@ missing.
 
 | Tool | Minimum | Check |
 |---|---|---|
-| Terraform | ≥ 1.5 | `terraform version` |
+| Terraform | ≥ 1.10 | `terraform version` |
 | AWS CLI v2 | current | `aws --version` |
 | jq | any | `jq --version` |
 | AWS provider | ≥ 6.28 (pinned) | resolved on `init`; needed by EventBridge module v4.3.2 |
@@ -154,7 +154,7 @@ the exact reverse via `scripts/destroy-prod.sh`.
 
 | Gate | Must be true |
 |---|---|
-| Tools | `terraform ≥1.5`, `aws` v2, `jq` on PATH |
+| Tools | `terraform ≥1.10`, `aws` v2, `jq` on PATH |
 | Identity | `get-caller-identity` shows the **intended** account; operator can create S3/IAM |
 | Region | primary + secondary both in-policy and service-available |
 | Global endpoint | if `true`: read CICD §2 (`awscrt`), have a public health domain, accept the Route 53 cost |

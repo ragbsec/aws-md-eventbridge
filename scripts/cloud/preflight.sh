@@ -56,7 +56,7 @@ fi
 section "tools"
 if command -v terraform >/dev/null 2>&1; then
   v="$(terraform version -json 2>/dev/null | jq -r .terraform_version 2>/dev/null || terraform version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
-  if version_ge "$v" "1.5.0" && ! version_ge "$v" "2.0.0"; then pass "terraform" "$v (need >=1.5,<2.0)"; else fail "terraform" "$v (need >=1.5,<2.0)" offline; fi
+  if version_ge "$v" "1.10.0" && ! version_ge "$v" "2.0.0"; then pass "terraform" "$v (need >=1.10,<2.0 (S3 use_lockfile))"; else fail "terraform" "$v (need >=1.10,<2.0 (S3 use_lockfile))" offline; fi
 else fail "terraform" "not installed — run scripts/cloud/install-tools.sh" offline; fi
 
 if command -v tflint >/dev/null 2>&1; then

@@ -16,13 +16,17 @@ running in a Claude Code cloud session.
 ## Rules
 
 - **Offline first, deploy only on explicit approval.** `scripts/verify*.sh`,
-  `scripts/contract_test.py` and `scripts/compliance/01-static-posture.sh` are
-  safe. `create*.sh`, `test*.sh`, `destroy*.sh`, `rebuild.sh`,
+  `scripts/contract_test.py`, `scripts/leftover-check.sh` (read-only sweep of
+  both regions) and `scripts/compliance/01-static-posture.sh` are safe. `create*.sh`, `test*.sh`, `destroy*.sh`, `rebuild.sh`,
   `compliance/02-04` and `03-failure-drills.sh --confirm` create, bill or mutate
   real AWS resources — ask the user first, and confirm the account ID shown by
   preflight.
 - **Never print, log, or commit credentials.** `.runtime/` (deployer keys,
   backend config) and `*.tfstate` are gitignored and must stay that way.
+- **Destroy must be proven clean.** `destroy-prod.sh` stops before deleting the
+  state bucket if any layer failed (re-run; `FORCE_UNLOCK=1` clears a stale lock
+  from an interrupted run) and ends with `leftover-check.sh`. Never trust a
+  "destroyed" banner on its own. Terraform >= 1.10 is required (`use_lockfile`).
 - **Cloud containers are ephemeral.** Whatever `create*.sh` deploys must be torn
   down with `destroy*.sh` in the same session, or the user must keep
   `STATE_BUCKET_NAME` so a later session can run `scripts/cloud/restore-runtime.sh`.

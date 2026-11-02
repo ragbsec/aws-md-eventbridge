@@ -39,7 +39,7 @@ preflight), [`TLS_POLICY.md`](TLS_POLICY.md), [`FREE_TIER.md`](FREE_TIER.md).
 > cost, and the final GO/NO-GO gate) see **[`PREFLIGHT_CHECKLIST.md`](PREFLIGHT_CHECKLIST.md)** —
 > run through it before your first deploy into any new account. The essentials:
 
-- Terraform ≥ 1.5, AWS CLI with a configured `default` profile, `jq`.
+- Terraform ≥ 1.10, AWS CLI with a configured `default` profile, `jq`.
 - AWS provider ≥ 6.28 (pinned).
 - Region **us-east-1 or us-west-2 only** (sandbox rule).
 - **Confirm your identity/account first:**

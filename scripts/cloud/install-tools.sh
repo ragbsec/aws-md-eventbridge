@@ -4,7 +4,7 @@
 # (Claude Code cloud session, CI runner, fresh VM). Idempotent: a tool that is
 # already on PATH at an acceptable version is left alone.
 #
-#   terraform  (pinned TERRAFORM_VERSION, >= 1.5 required by every root)
+#   terraform  (pinned TERRAFORM_VERSION, >= 1.10 required by every root (S3-native state locking: use_lockfile))
 #   tflint     (pinned TFLINT_VERSION,   >= 0.50 required by .tflint.hcl)
 #   jq         (pinned JQ_VERSION)
 #   aws        (AWS CLI v2 from awscli.amazonaws.com; falls back to the PyPI
@@ -20,7 +20,7 @@
 ###############################################################################
 set -Eeuo pipefail
 
-TERRAFORM_VERSION="${TERRAFORM_VERSION:-1.9.8}"
+TERRAFORM_VERSION="${TERRAFORM_VERSION:-1.10.5}"
 TFLINT_VERSION="${TFLINT_VERSION:-0.53.0}"
 JQ_VERSION="${JQ_VERSION:-1.7.1}"
 
@@ -63,7 +63,7 @@ STATUS=()
 install_terraform() {
   if command -v terraform >/dev/null 2>&1; then
     local have; have="$(terraform version -json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["terraform_version"])' 2>/dev/null || echo 0)"
-    if version_ge "$have" "1.5.0"; then STATUS+=("terraform $have (already installed)"); return; fi
+    if version_ge "$have" "1.10.0"; then STATUS+=("terraform $have (already installed)"); return; fi
   fi
   log "installing terraform ${TERRAFORM_VERSION}"
   fetch "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${ARCH}.zip" "$WORK/tf.zip" \

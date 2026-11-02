@@ -56,3 +56,47 @@ tf_output() {
   local dir="$1" name="$2"
   terraform -chdir="$dir" output -raw "$name"
 }
+
+# ---- safe layer destroy ----------------------------------------------------
+# Layers that failed to destroy. Callers MUST check this before destroying
+# bootstrap: bootstrap owns the S3 state bucket, and removing it while a layer
+# still has resources strands them with no state to destroy them from.
+DESTROY_FAILED=()
+
+# tf_destroy_layer LABEL DIR [terraform destroy args...]
+#   Runs `terraform destroy` for one already-initialised layer. Waits up to 60s
+#   for a state lock. If the lock is STALE (left by an interrupted run) and
+#   FORCE_UNLOCK=1, clears exactly that lock ID once and retries. Any other
+#   failure is recorded in DESTROY_FAILED — never swallowed.
+tf_destroy_layer() {
+  local label="$1" dir="$2"; shift 2
+  local log attempt lock_id
+  log="$(mktemp "${RUNTIME_DIR}/destroy-${label}.XXXXXX")"
+  for attempt in 1 2; do
+    if terraform -chdir="$dir" destroy -auto-approve -input=false -lock-timeout=60s "$@" 2>&1 | tee "$log" >&2; then
+      rm -f "$log"; ok "${label} destroyed"; return 0
+    fi
+    lock_id=""
+    if grep -q "Error acquiring the state lock" "$log"; then
+      lock_id="$(grep -oE 'ID:[[:space:]]+[0-9a-f-]{36}' "$log" | head -1 | awk '{print $2}')"
+    fi
+    if [[ -n "$lock_id" && "${FORCE_UNLOCK:-0}" == "1" && "$attempt" -eq 1 ]]; then
+      warn "${label}: stale state lock ${lock_id} — FORCE_UNLOCK=1, clearing it and retrying once"
+      terraform -chdir="$dir" force-unlock -force "$lock_id" >&2 || break
+      continue
+    fi
+    [[ -n "$lock_id" ]] && err "${label}: state is locked (lock ${lock_id}). If no other terraform is running (e.g. an earlier run was interrupted), re-run with FORCE_UNLOCK=1"
+    break
+  done
+  rm -f "$log"
+  DESTROY_FAILED+=("$label")
+  err "${label}: destroy FAILED"
+  return 1
+}
+
+# tf_init_layer LABEL DIR BACKEND_HCL — init a layer; a failure is recorded.
+tf_init_layer() {
+  local label="$1" dir="$2" backend="$3"
+  terraform -chdir="$dir" init -input=false -reconfigure -backend-config="$backend" >&2 \
+    || { DESTROY_FAILED+=("$label (init)"); err "${label}: init FAILED"; return 1; }
+}
