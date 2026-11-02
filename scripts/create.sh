@@ -72,7 +72,7 @@ export AWS_SHARED_CREDENTIALS_FILE="$DEPLOYER_CREDS_FILE"
 
 # IAM eventual consistency: a brand-new access key can take a few seconds.
 info "waiting for deployer credentials to become active..."
-for _ in $(seq 1 30); do
+for _ in $(seq 1 90); do   # new IAM keys can take >60s to propagate
   if aws sts get-caller-identity --profile "$DEPLOYER_PROFILE" --region "$REGION" >/dev/null 2>&1; then
     break
   fi

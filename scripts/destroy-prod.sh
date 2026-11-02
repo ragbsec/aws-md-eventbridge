@@ -102,6 +102,7 @@ terraform -chdir="$BOOTSTRAP_DIR" destroy -auto-approve -input=false \
   -var "state_bucket_name=${STATE_BUCKET_NAME:-}" >&2
 
 rm -f "$DEPLOYER_CREDS_FILE" "$BACKEND_HCL" "${RUNTIME_DIR}"/*.json 2>/dev/null || true
+rm -rf "${LAB_ROOT}/modules/event-application/.build"   # derived Lambda zips; see create-prod.sh
 
 # ---- PROOF: read-only sweep of both regions + global; fails if anything remains.
 info "STEP 6 — verifying nothing is left behind"

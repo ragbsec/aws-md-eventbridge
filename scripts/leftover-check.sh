@@ -59,6 +59,8 @@ check_region() {
   done
   report "KMS keys (${r})" "$live"
   [[ "$pending" -gt 0 ]] && info "${r}: ${pending} KMS key(s) pending deletion (expected; AWS waits 7-30 days)"
+  report "log delivery sources (${r})"      "$(aws logs describe-delivery-sources "${A[@]}" "${R[@]}" --query "deliverySources[?contains(name,\`${NAME_PREFIX}\`)].name" --output text | tr '\t' '\n')"
+  report "log delivery destinations (${r})" "$(aws logs describe-delivery-destinations "${A[@]}" "${R[@]}" --query "deliveryDestinations[?contains(name,\`${NAME_PREFIX}\`)].name" --output text | tr '\t' '\n')"
   report "log groups (${r})"       "$(aws logs describe-log-groups "${A[@]}" "${R[@]}" --query "logGroups[?contains(logGroupName,\`${NAME_PREFIX}\`)].logGroupName" --output text | tr '\t' '\n')"
   report "SNS topics (${r})"       "$(aws sns list-topics "${A[@]}" "${R[@]}" --query "Topics[?contains(TopicArn,\`${NAME_PREFIX}\`)].TopicArn" --output text | tr '\t' '\n')"
   report "SQS queues (${r})"       "$(aws sqs list-queues "${A[@]}" "${R[@]}" --query "QueueUrls[?contains(@,\`${NAME_PREFIX}\`)]" --output text 2>/dev/null | tr '\t' '\n')"

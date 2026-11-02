@@ -66,8 +66,8 @@ region = ${PRIMARY_REGION}
 EOF
 export AWS_SHARED_CREDENTIALS_FILE="$DEPLOYER_CREDS_FILE"
 
-info "waiting for deployer credentials to activate..."
-for _ in $(seq 1 30); do
+info "waiting for deployer credentials to activate (IAM propagation, up to ~3 min)..."
+for _ in $(seq 1 90); do   # new IAM keys can take >60s to propagate
   aws sts get-caller-identity --profile "$DEPLOYER_PROFILE" --region "$PRIMARY_REGION" >/dev/null 2>&1 && break
   sleep 2
 done
@@ -127,6 +127,14 @@ fi
 # ---- STEP 5: application (both regions) -----------------------------------
 info "STEP 5 — application apply (deployer, ${PRIMARY_REGION} + ${SECONDARY_REGION})"
 terraform -chdir="$APPLICATION_DIR" init -input=false -reconfigure -backend-config="$BACKEND_HCL" >&2
+# The producer zip is rebuilt (non-byte-identical) by a null_resource on a fresh
+# state. A zip left in .build/ by an EARLIER deployment is read at plan time, so
+# its hash differs from the rebuilt one at apply time ("Provider produced
+# inconsistent final plan ... source_code_hash"). With empty application state
+# nothing depends on the old artifacts, so discard them.
+if [[ -z "$(terraform -chdir="$APPLICATION_DIR" state list 2>/dev/null)" ]]; then
+  rm -rf "${LAB_ROOT}/modules/event-application/.build"
+fi
 terraform -chdir="$APPLICATION_DIR" apply -auto-approve -input=false \
   -var "primary_region=${PRIMARY_REGION}" \
   -var "secondary_region=${SECONDARY_REGION}" \
