@@ -103,6 +103,7 @@ SECONDARY_REGION=us-east-2 ENABLE_GLOBAL_ENDPOINT=true \
 | Audience / topic | Doc |
 | --- | --- |
 | **Fresh user — start here (ordered onboarding path)** | [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) |
+| **Running in a Claude Code cloud session (setup + preflight)** | [`docs/CLAUDE_CLOUD_SETUP.md`](docs/CLAUDE_CLOUD_SETUP.md) |
 | **New to the repo — read first** | [`docs/FOLDER_STRUCTURE.md`](docs/FOLDER_STRUCTURE.md) |
 | Architecture, security, monitoring (multi-region) | [`docs/PRODUCTION_ARCHITECTURE.md`](docs/PRODUCTION_ARCHITECTURE.md) |
 | System architects (base lab) | [`docs/ARCHITECT_GUIDE.md`](docs/ARCHITECT_GUIDE.md) |
