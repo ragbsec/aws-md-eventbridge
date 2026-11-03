@@ -1,0 +1,13 @@
+# mq-integration: nothing generated or secret is committed
+__pycache__/
+*.py[co]
+.pytest_cache/
+.venv/
+.terraform/
+.build/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.env
+bridge.env
+*.zip

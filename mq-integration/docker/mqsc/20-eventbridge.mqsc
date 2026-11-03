@@ -1,0 +1,93 @@
+* =============================================================================
+* 20-eventbridge.mqsc  -  MQ objects for the EventBridge bridge (queue manager QM1)
+*
+* Mounted at /etc/mqm/20-eventbridge.mqsc. The IBM container runs every
+* /etc/mqm/*.mqsc through runmqsc at start (alphabetical, so after the image's
+* own 10-dev.mqsc). Every command is re-runnable: DEFINE ... REPLACE, SET ... .
+*
+* Data flow:
+*   apps --put--> ORDERS.OUT --bridge--> EventBridge (prod.orders / OrderPlaced)
+*   EventBridge --> SQS/bridge --put--> ORDERS.IN --> apps
+*   poison messages (backed out > 3 times) --> ORDERS.DLQ
+*
+* NOTE: the image's 10-dev.mqsc also creates DEV.* objects (DEV.APP.SVRCONN,
+* DEV.QUEUE.1, ...) and puts users in OS groups: admin -> mqm, app -> mqclient.
+* The 'app' user's group is therefore 'mqclient' (NOT a custom 'mqapp' group);
+* AUTHREC below targets mqclient. Remove the DEV.* objects once happy
+* (DELETE ... ) if you want a minimal surface.
+* =============================================================================
+
+* ---- Queues -----------------------------------------------------------------
+
+* Orders produced by applications; the bridge consumes these and publishes to EventBridge.
+* BOTHRESH/BOQNAME: MQ does NOT move messages itself. It increments BACKCOUNT on
+* each rollback; a consumer (the bridge) must check BACKCOUNT >= BOTHRESH and
+* re-put the message to BOQNAME. These attributes tell it where and when.
+DEFINE QLOCAL('ORDERS.OUT') REPLACE +
+       DESCR('Orders from apps; bridge consumes to EventBridge') +
+       DEFPSIST(YES) MAXDEPTH(50000) +
+       BOTHRESH(3) BOQNAME('ORDERS.DLQ')
+
+* Events delivered from EventBridge toward applications; the bridge puts here.
+DEFINE QLOCAL('ORDERS.IN') REPLACE +
+       DESCR('EventBridge events delivered to apps by the bridge') +
+       DEFPSIST(YES) MAXDEPTH(50000)
+
+* Backout / dead-letter queue. Inspect and replay manually.
+DEFINE QLOCAL('ORDERS.DLQ') REPLACE +
+       DESCR('Backout and dead-letter queue') +
+       DEFPSIST(YES) MAXDEPTH(50000)
+
+* Queue manager dead-letter queue (messages MQ itself cannot deliver).
+ALTER QMGR DEADQ('ORDERS.DLQ')
+
+* ---- Channel ----------------------------------------------------------------
+
+* Client (SVRCONN) channel the bridge and apps connect through.
+* MCAUSER left blank: identity comes from the authenticated user (ADOPTCTX) and
+* CHLAUTH below. MAXINST: total instances; MAXINSTC: per client address.
+* TLS is optional here (no SSLCIPH): traffic is plaintext on the Docker network
+* and loopback. To require TLS add SSLCIPH('ANY_TLS12_OR_HIGHER') SSLCAUTH(OPTIONAL)
+* and provide a key repository (MQ_TLS_KEYSTORE / MQ_TLS_PASSPHRASE in the image).
+DEFINE CHANNEL('APP.SVRCONN') CHLTYPE(SVRCONN) REPLACE +
+       DESCR('Application client channel (bridge and apps)') +
+       MCAUSER(' ') MAXINST(20) MAXINSTC(10) +
+       SHARECNV(10) HBINT(300)
+
+* ---- Authentication (who are you) -------------------------------------------
+
+* Check user + password against the container OS users. CHCKCLNT(REQUIRED):
+* clients MUST send valid credentials. ADOPTCTX(YES): the authenticated user
+* becomes the identity for authorization checks.
+DEFINE AUTHINFO('EB.AUTHINFO') AUTHTYPE(IDPWOS) REPLACE +
+       CHCKCLNT(REQUIRED) CHCKLOCL(OPTIONAL) ADOPTCTX(YES) +
+       DESCR('OS user/password check for client connections')
+ALTER QMGR CONNAUTH('EB.AUTHINFO')
+
+* ---- Channel authentication (who may connect where) -------------------------
+
+* 1. Default deny: every channel, every address, no access.
+SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS) +
+    DESCR('Default deny') ACTION(REPLACE)
+
+* 2. Allow only user 'app' on APP.SVRCONN, running as MCAUSER 'app'
+*    (USERSRC(CHANNEL) = use the MCAUSER from this rule). Any address: the
+*    network boundary is the loopback binding / security group, not CHLAUTH.
+SET CHLAUTH('APP.SVRCONN') TYPE(USERMAP) CLNTUSER('app') +
+    USERSRC(CHANNEL) MCAUSER('app') ADDRESS('*') +
+    DESCR('Only app may use APP.SVRCONN') ACTION(REPLACE)
+
+* 3. Never allow MQ administrators over this application channel.
+SET CHLAUTH('APP.SVRCONN') TYPE(BLOCKUSER) USERLIST('*MQADMIN') +
+    DESCR('No admin users on the app channel') ACTION(REPLACE)
+
+* ---- Authorization (what may you do) ----------------------------------------
+
+* 'app' belongs to OS group mqclient. Least privilege: connect to QM1, and
+* put/get/inq/browse on ORDERS.* queues only (ORDERS.** also matches nested names).
+SET AUTHREC OBJTYPE(QMGR) GROUP('mqclient') AUTHADD(CONNECT)
+SET AUTHREC PROFILE('ORDERS.**') OBJTYPE(QUEUE) GROUP('mqclient') +
+    AUTHADD(PUT,GET,INQ,BROWSE)
+
+* ---- Apply ------------------------------------------------------------------
+REFRESH SECURITY TYPE(CONNAUTH)

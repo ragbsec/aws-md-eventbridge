@@ -1,0 +1,6 @@
+# boto3[crt] pulls awscrt, required for SigV4a when PutEvents uses EndpointId
+# (EventBridge global endpoint). See docs/CICD_AND_OPERATIONS.md section 2.
+# Versions pinned from PyPI listings seen at authoring time; re-confirm.
+boto3[crt]==1.43.123
+# Compiles a C extension against the IBM MQ client (see Dockerfile).
+ibmmq==2.1.2

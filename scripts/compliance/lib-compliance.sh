@@ -20,6 +20,12 @@ set -Eeuo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib.sh"
 
 APPLICATION_DIR="${LAB_ROOT}/application"
+# Option C layout: one Terraform root per region plus a global root. (The old
+# single `platform/` root no longer exists; PLATFORM_DIR is kept only as a
+# fallback for deployments still on that layout.)
+PLATFORM_PRIMARY_DIR="${LAB_ROOT}/platform-primary"
+PLATFORM_SECONDARY_DIR="${LAB_ROOT}/platform-secondary"
+PLATFORM_GLOBAL_DIR="${LAB_ROOT}/platform-global"
 PLATFORM_DIR="${LAB_ROOT}/platform"
 
 # Where verdict JSONL is written (one object per control per resource).
@@ -59,8 +65,17 @@ na_v()   { verdict "$1" NOT_APPLICABLE "$2" "$3"; }
 #   D_SNS_TOPIC
 discover() {
   local role="$1"
-  local pj aj
-  pj="$(terraform -chdir="$PLATFORM_DIR" output -json "$role" 2>/dev/null || echo '{}')"
+  local pj aj pdir
+  # Each regional root exposes a `platform` output object for its own region.
+  case "$role" in
+    primary)   pdir="$PLATFORM_PRIMARY_DIR" ;;
+    secondary) pdir="$PLATFORM_SECONDARY_DIR" ;;
+    *)         die "discover: role must be primary|secondary (got '$role')" ;;
+  esac
+  pj="$(terraform -chdir="$pdir" output -json platform 2>/dev/null || echo '{}')"
+  # Fallback: legacy single-root layout (`platform/` with primary/secondary outputs).
+  [[ "$(jq -r '.region // empty' <<<"$pj")" ]] \
+    || pj="$(terraform -chdir="$PLATFORM_DIR" output -json "$role" 2>/dev/null || echo '{}')"
   aj="$(terraform -chdir="$APPLICATION_DIR" output -json "$role" 2>/dev/null || echo '{}')"
 
   D_REGION="${REGION_OVERRIDE:-$(jq -r '.region // empty' <<<"$pj")}"

@@ -1,0 +1,9 @@
+{
+  "orderId": "5a1c1f0e-7a4e-4c2e-9d3b-2f6b8e1a9c10",
+  "product": "gadget",
+  "quantity": 2,
+  "amount": 19.5,
+  "placedAt": "2026-11-03T10:15:00Z",
+  "origin": "ibm-mq",
+  "correlationId": "414d51204d514d31202020202020202020"
+}

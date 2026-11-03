@@ -26,6 +26,7 @@ The control framework mixes two kinds of requirement:
 | `01-static-posture.sh` | **Read-only.** EVB-03/04/05/06/07/08/09/10/12. Describe-based; mutates nothing. CI-safe. |
 | `02-functional.sh`     | **Live, non-destructive.** HA-01/02, EVB-07 (negative routing), EVB-15 (duplicate-key idempotency). Invokes the producer and publishes events. |
 | `03-failure-drills.sh` | **Mutating, self-cleaning, gated by `--confirm`.** EVB-10/HA-14 DLQ fault injection; EVB-11/HA-12 archive replay. Adds one throwaway target + purges the DLQ, never touches Terraform state. |
+| `05-global-endpoint.sh` | **Live.** Global endpoint: config, health check, `PutEvents --endpoint-id` (SigV4a), replication to the secondary. `--failover --confirm` adds a **mutating** simulated-outage drill (flips the health Lambda, always restores). Needs `ENABLE_GLOBAL_ENDPOINT=true`. Same steps by hand: `docs/AWS_CLI_TEST_COOKBOOK.md`. |
 | `run-compliance.sh`    | Orchestrates the families, folds per-resource verdicts into one per-control status (worst wins), and writes `manifest.json` + `manifest.md`. Exits non-zero on any `FAIL`. |
 
 ## Run it

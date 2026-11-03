@@ -1,7 +1,7 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "title": "OrderPlaced"
   },
   "paths": {},
@@ -15,7 +15,9 @@
           "product":  { "type": "string", "minLength": 1 },
           "quantity": { "type": "integer", "minimum": 1 },
           "amount":   { "type": "number", "minimum": 0 },
-          "placedAt": { "type": "string", "format": "date-time" }
+          "placedAt": { "type": "string", "format": "date-time" },
+          "origin":        { "type": "string", "minLength": 1 },
+          "correlationId": { "type": "string", "minLength": 1 }
         },
         "additionalProperties": false
       }

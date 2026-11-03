@@ -1,0 +1,90 @@
+# IBM MQ + EventBridge bridge. Lives at /opt/eb-mq/docker on the EC2 host.
+#
+# Inputs (all from files next to this one, never inline):
+#   .env        MQ_ADMIN_PASSWORD, MQ_APP_PASSWORD (+ optional MQ_IMAGE, MQ_BIND_ADDR)
+#   bridge.env  non-secret bridge settings rendered at boot (AWS_REGION, EVENT_BUS_NAME, ...)
+#
+# AWS credentials: the bridge uses the EC2 instance role via IMDSv2. The container
+# sits on the default bridge network (one extra network hop), so the instance's
+# metadata hop limit MUST be 2 (http_put_response_hop_limit = 2). The Terraform
+# builder sets this; with hop limit 1 the bridge cannot get credentials.
+
+name: eb-mq
+
+services:
+  mq:
+    # Pinned to the IBM MQ Advanced for Developers tag chosen for this lab (10.0.0.5-r2).
+    # Tag existence confirmed via the icr.io registry manifest API (linux/amd64, s390x,
+    # ppc64le: NO arm64, so t4g/Graviton hosts cannot run it). The image has NOT been
+    # pulled or started by us yet: the first start is the first proof that the
+    # 20-eventbridge.mqsc objects load. Avoid ":latest" (it moves).
+    image: ${MQ_IMAGE:-icr.io/ibm-messaging/mq:10.0.0.5-r2}
+    hostname: mq
+    restart: unless-stopped
+    environment:
+      # LICENSE=accept is YOUR acceptance of the IBM MQ Advanced for Developers
+      # license. Read it first: https://www.ibm.com/support/customer/csol/terms/?id=L-XRMC-6LJPHR
+      # (look up the license ID for your image version via the IBM license page:
+      #  https://www.ibm.com/support/pages/ibm-mq-license-information ).
+      # Do not set this on behalf of someone who has not agreed to it.
+      LICENSE: accept
+      MQ_QMGR_NAME: QM1
+      # The image natively creates two OS/MQ users from these variables:
+      #   admin -> group mqm      (MQ admin + web console)
+      #   app   -> group mqclient (client connections; no admin rights)
+      MQ_ADMIN_PASSWORD: ${MQ_ADMIN_PASSWORD:?set MQ_ADMIN_PASSWORD in .env}
+      MQ_APP_PASSWORD: ${MQ_APP_PASSWORD:?set MQ_APP_PASSWORD in .env}
+      MQ_ENABLE_METRICS: "false"   # set "true" to expose Prometheus metrics on 9157 (not published here)
+    ports:
+      # Loopback only by default. Override MQ_BIND_ADDR only behind a security group you control.
+      - "${MQ_BIND_ADDR:-127.0.0.1}:1414:1414"   # queue manager listener
+      - "${MQ_BIND_ADDR:-127.0.0.1}:9443:9443"   # web console / REST (HTTPS, self-signed)
+    volumes:
+      - qm1data:/mnt/mqm                                   # queue manager data + logs (persistent messages)
+      # Files in /etc/mqm/*.mqsc are run at first start, after the image's own 10-dev.mqsc.
+      - ./mqsc/20-eventbridge.mqsc:/etc/mqm/20-eventbridge.mqsc:ro
+    healthcheck:
+      test: ["CMD-SHELL", "chkmqhealthy"]    # ships in the image; exits 0 when QM1 is running
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1536M
+    stop_grace_period: 60s    # let the queue manager shut down cleanly
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  bridge:
+    # Dockerfile is owned by ../bridge.
+    build: ../bridge
+    restart: unless-stopped
+    depends_on:
+      mq:
+        condition: service_healthy
+    env_file:
+      - ./bridge.env      # AWS_REGION, EVENT_BUS_NAME, EVENT_SOURCE, OUTBOUND_QUEUE_URL, MQ_HOST (=mq),
+                          # MQ_PORT, MQ_QMGR, MQ_CHANNEL, MQ_USER, MQ_QUEUE_TO_EB, MQ_QUEUE_FROM_EB,
+                          # EB_ENDPOINT_ID, SECRET_ID
+    environment:
+      MQ_PASSWORD: ${MQ_APP_PASSWORD:?set MQ_APP_PASSWORD in .env}
+    # Default bridge networking on purpose (see metadata hop-limit note at the top).
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  qm1data:

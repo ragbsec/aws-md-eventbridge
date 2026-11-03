@@ -18,11 +18,13 @@ require_tools terraform aws jq
 export AWS_SHARED_CREDENTIALS_FILE="${RUNTIME_DIR}/deployer.aws-credentials"
 
 # Resolve both regions + global-endpoint coordinates from platform outputs.
-PRI_REGION="$(terraform -chdir="$PLATFORM_DIR" output -json primary 2>/dev/null | jq -r '.region // empty')"
-SEC_REGION="$(terraform -chdir="$PLATFORM_DIR" output -json secondary 2>/dev/null | jq -r '.region // empty')"
-GE_URL="$(terraform -chdir="$PLATFORM_DIR" output -raw global_endpoint_url 2>/dev/null || echo '')"
-GE_ID="$(terraform -chdir="$PLATFORM_DIR" output -raw global_endpoint_id 2>/dev/null || echo '')"
-HC_ID="$(terraform -chdir="$PLATFORM_DIR" output -raw health_check_id 2>/dev/null || echo '')"
+# Option C layout: regions come from the two regional roots, the global
+# endpoint coordinates from platform-global.
+PRI_REGION="$(terraform -chdir="$PLATFORM_PRIMARY_DIR" output -raw region 2>/dev/null || echo '')"
+SEC_REGION="$(terraform -chdir="$PLATFORM_SECONDARY_DIR" output -raw region 2>/dev/null || echo '')"
+GE_URL="$(terraform -chdir="$PLATFORM_GLOBAL_DIR" output -raw global_endpoint_url 2>/dev/null || echo '')"
+GE_ID="$(terraform -chdir="$PLATFORM_GLOBAL_DIR" output -raw global_endpoint_id 2>/dev/null || echo '')"
+HC_ID="$(terraform -chdir="$PLATFORM_GLOBAL_DIR" output -raw health_check_id 2>/dev/null || echo '')"
 
 echo "======================================================================"
 echo " AWS GLOBAL-ENDPOINT STANDARDS (multi-region, read-only)"

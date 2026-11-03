@@ -1,0 +1,96 @@
+#!/bin/bash
+set -euo pipefail
+exec > >(tee -a /var/log/eb-mq-bootstrap.log) 2>&1
+echo "[bootstrap] start $(date -u +%FT%TZ)"
+umask 077
+
+REGION="${region}"
+SECRET_ID="${secret_id}"
+BASE=/opt/eb-mq
+
+# IMDSv2 token (used for region/instance sanity; credentials come from the instance profile)
+TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+echo "[bootstrap] instance $IID"
+
+dnf install -y docker unzip jq openssl
+systemctl enable --now docker
+
+# Docker Compose plugin (pinned)
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+
+# Fetch and extract bundle
+mkdir -p "$BASE"
+aws s3 cp "s3://${bundle_bucket}/${bundle_key}" /tmp/bundle.zip --region "$REGION"
+unzip -oq /tmp/bundle.zip -d "$BASE"
+rm -f /tmp/bundle.zip
+# umask 077 made the extracted tree root-only; the bridge image runs as uid 10001
+# (COPY keeps modes) and MQ (uid mqm) must read the bind-mounted mqsc file.
+chmod -R u=rwX,go=rX "$BASE"
+
+# Passwords: generate only if the secret has no value yet. Never echoed.
+if aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region "$REGION" >/dev/null 2>&1; then
+  echo "[bootstrap] secret already has a value; reusing"
+else
+  ADMIN_PW=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)
+  APP_PW=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)
+  jq -n --arg a "$ADMIN_PW" --arg p "$APP_PW" '{admin_password:$a, app_password:$p}' > /tmp/secret.json
+  aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --region "$REGION" \
+    --secret-string file:///tmp/secret.json >/dev/null
+  shred -u /tmp/secret.json
+  unset ADMIN_PW APP_PW
+  echo "[bootstrap] secret populated"
+fi
+SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region "$REGION" --query SecretString --output text)
+
+# Root-only compose env file (compose reads .env automatically)
+ENVF="$BASE/docker/.env"
+install -m 0600 /dev/null "$ENVF"
+{
+  echo "MQ_IMAGE=${mq_image}"
+  echo "MQ_ADMIN_PASSWORD=$(jq -r .admin_password <<<"$SECRET_JSON")"
+  echo "MQ_APP_PASSWORD=$(jq -r .app_password <<<"$SECRET_JSON")"
+} > "$ENVF"
+unset SECRET_JSON
+
+# Bridge env file (no passwords; the bridge reads them from Secrets Manager at runtime)
+BENV="$BASE/docker/bridge.env"
+install -m 0600 /dev/null "$BENV"
+cat > "$BENV" <<ENVEOF
+AWS_REGION=${region}
+EVENT_BUS_NAME=${bus_name}
+EVENT_SOURCE=${event_source}
+OUTBOUND_QUEUE_URL=${outbound_queue}
+MQ_HOST=mq
+MQ_PORT=1414
+MQ_QMGR=QM1
+MQ_CHANNEL=APP.SVRCONN
+MQ_USER=app
+MQ_QUEUE_TO_EB=ORDERS.OUT
+MQ_QUEUE_FROM_EB=ORDERS.IN
+EB_ENDPOINT_ID=${eb_endpoint_id}
+SECRET_ID=${secret_id}
+ENVEOF
+
+cd "$BASE/docker"
+docker compose up -d --build
+
+# Wait for the MQ container to be healthy, then write marker
+for i in $(seq 1 60); do
+  CID=$(docker compose ps -q mq 2>/dev/null || true)
+  if [ -n "$CID" ]; then
+    H=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CID" 2>/dev/null || true)
+    if [ "$H" = "healthy" ] || [ "$H" = "running" ]; then
+      date -u +%FT%TZ > "$BASE/READY"
+      echo "[bootstrap] MQ $H; READY written"
+      exit 0
+    fi
+  fi
+  sleep 10
+done
+echo "[bootstrap] MQ did not become healthy in time" >&2
+exit 1
