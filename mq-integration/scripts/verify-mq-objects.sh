@@ -14,7 +14,8 @@
 #   channel auth    default deny (NOACCESS), USERMAP for 'app', BLOCKUSER *MQADMIN
 #   authorities     principal app: CONNECT on QM1; PUT/GET/INQ/BROWSE on ORDERS.**
 #                   (this image has no OS users/groups; rights go to the user name)
-#   (live only)     EC2 instance running, bridge container running, READY marker,
+#   (live only)     EC2 instance running, bridge container running AND able to log in to
+#                   MQ from its own container, READY marker,
 #                   SQS queue + DLQ redrive, EventBridge rule ENABLED with the SQS
 #                   target, Secrets Manager secret present
 #   (--smoke)       real client connections through APP.SVRCONN: 'app' can put and
@@ -195,6 +196,32 @@ if [[ "$MODE" == live ]]; then
   grep -q 'READY=yes' <<<"$hostchk"           && pass "bootstrap marker /opt/eb-mq/READY present" || fail "READY marker missing (bootstrap not finished?)"
   grep -Eq '^mq=running'     <<<"$hostchk"    && pass "compose service mq running"     || fail "compose service mq not running"
   grep -Eq '^bridge=running' <<<"$hostchk"    && pass "compose service bridge running" || fail "compose service bridge not running"
+
+  # The checks above run INSIDE the mq container (localhost). The bridge reaches MQ from ITS OWN
+  # container over the docker network as user 'app': prove that path, which is what failed once
+  # (MQRC 2009 because the bridge user had no home directory).
+  BPROBE="$(cat <<'EOS'
+cd /opt/eb-mq/docker
+echo "BRIDGEHEALTH=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q bridge)" 2>/dev/null)"
+docker compose exec -T bridge python - <<'PY'
+import os, ibmmq as mq
+cd = mq.CD(); cd.ChannelName = os.environ["MQ_CHANNEL"].encode()
+cd.ConnectionName = ("%s(%s)" % (os.environ["MQ_HOST"], os.environ.get("MQ_PORT", "1414"))).encode()
+cd.ChannelType = mq.CMQXC.MQCHT_CLNTCONN; cd.TransportType = mq.CMQXC.MQXPT_TCP
+q = mq.QueueManager(None)
+try:
+    q.connect_with_options(os.environ["MQ_QMGR"], cd=cd, user=os.environ["MQ_USER"], password=os.environ["MQ_PASSWORD"])
+    print("BRIDGECONNECT=OK"); q.disconnect()
+except mq.MQMIError as e:
+    print("BRIDGECONNECT=FAIL reason=%s" % e.reason)
+PY
+EOS
+)"
+  bprobe="$(bash "${MQ_SCRIPTS}/ssm-run.sh" "$INSTANCE_ID" "$BPROBE" 2>&1 || true)"
+  grep -q 'BRIDGECONNECT=OK' <<<"$bprobe" \
+    && pass "bridge container can log in to MQ as app over the docker network" \
+    || fail "bridge container CANNOT connect to MQ ($(grep -o 'BRIDGECONNECT=FAIL reason=[0-9]*' <<<"$bprobe" | head -1)) — see: docker compose logs bridge"
+  grep -q 'BRIDGEHEALTH=unhealthy' <<<"$bprobe" && fail "bridge container health is unhealthy" || true
 
   QURL="${OUTBOUND_QUEUE_URL:-$(tf_output "$MQ_TF_DIR" outbound_queue_url 2>/dev/null || true)}"
   if [[ -n "$QURL" ]]; then

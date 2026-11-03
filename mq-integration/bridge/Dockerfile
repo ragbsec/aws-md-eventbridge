@@ -42,7 +42,10 @@ ENV LD_LIBRARY_PATH=/opt/mqm/lib64:/opt/mqm/lib \
     PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     HEALTH_FILE=/tmp/healthy
-RUN useradd --system --uid 10001 --no-create-home bridge
+# The IBM MQ client needs a WRITABLE HOME for its working files. Without one the client
+# fails every connection with MQRC 2009 (AMQ6235E: Directory '/home/bridge' missing).
+# (Found on EC2: the old --no-create-home user could not connect to MQ.)
+RUN useradd --system --uid 10001 --create-home --home-dir /home/bridge bridge
 WORKDIR /app
 COPY src/ /app/src/
 USER 10001
