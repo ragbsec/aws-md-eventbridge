@@ -21,6 +21,11 @@ running in a Claude Code cloud session.
   `compliance/02-04` and `03-failure-drills.sh --confirm` create, bill or mutate
   real AWS resources — ask the user first, and confirm the account ID shown by
   preflight.
+- **Always ask the user for `EXPECTED_AWS_ACCOUNT_ID`** before any create, deploy, test, destroy or
+  `compliance/02-05` run, every session and every time. Do not assume it from an earlier session, from this file
+  or from the environment variable (it can be stale), and do not override it on your own to get a preflight to
+  pass. Ask for the 12-digit ID, compare it with the account the preflight `sts` check reports, proceed only if they
+  match, and pass it explicitly (`EXPECTED_AWS_ACCOUNT_ID=<id> ...`). If they differ, stop and report.
 - **Never print, log, or commit credentials.** `.runtime/` (deployer keys,
   backend config) and `*.tfstate` are gitignored and must stay that way.
 - **Destroy must be proven clean.** `destroy-prod.sh` stops before deleting the
@@ -63,8 +68,8 @@ Start with `mq-integration/README.md` (its status table says what is proven), th
   bridge-to-MQ network problems (`verify-mq-objects.sh` also logs in from the bridge container).
 - **State at the end of the last session (2026-11-03):** everything destroyed and verified clean, nothing deployed.
   KMS keys in pending deletion are expected (7-30 days). The state bucket is gone, so rebuild from scratch.
-- **Open items:** `EXPECTED_AWS_ACCOUNT_ID` in the cloud environment is stale (the lab account is 968220652414: confirm
-  with the user); rotate the long-lived operator key; compliance suite still FAILs on the bus resource policy,
+- **Open items:** `EXPECTED_AWS_ACCOUNT_ID` in the cloud environment was stale last time (ask the user for the correct ID
+  every time, see Rules; do not reuse a value from this file); rotate the long-lived operator key; compliance suite still FAILs on the bus resource policy,
   producer permissions boundary, KMS confused-deputy condition and `PutEvents` retry; EventBridge-to-MQ is not
   region-resilient and a whole-`us-east-1` outage is not covered (deferred by design); no TLS on the MQ channel; no load
   test; no PR opened for this branch.
