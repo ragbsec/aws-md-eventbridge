@@ -33,7 +33,11 @@ aws_secret_access_key = verifystubsecretkeyverifystubsecretkey00
 region = us-east-1
 STUBEOF
 )
-trap 'rm -f "$STUB"' EXIT
+# Terraform remembers the real S3 backend in <root>/.terraform after deploy.sh has run, and
+# `init -backend=false` then still tries to validate it (STS 403 with the dummy credentials
+# below). Use a throwaway data dir so offline verification never sees the saved backend.
+VDATA="$(mktemp -d)"
+trap 'rm -f "$STUB"; rm -rf "$VDATA"' EXIT
 
 echo "======================================================================"
 echo " MQ INTEGRATION STATIC VERIFICATION (offline)"
@@ -47,10 +51,10 @@ elif [[ ! -d "$MQ_TF_DIR" ]]; then
 else
   if terraform -chdir="$MQ_TF_DIR" fmt -check -recursive >&2; then pass terraform fmt; else fail terraform fmt; fi
   init_log="${RUNTIME_DIR}/.mq-verify-init.log"
-  if env AWS_SHARED_CREDENTIALS_FILE="$STUB" AWS_PROFILE=default \
+  if env TF_DATA_DIR="$VDATA" AWS_SHARED_CREDENTIALS_FILE="$STUB" AWS_PROFILE=default \
        terraform -chdir="$MQ_TF_DIR" init -backend=false -input=false >"$init_log" 2>&1; then
     pass terraform init
-    if env AWS_SHARED_CREDENTIALS_FILE="$STUB" AWS_PROFILE=default \
+    if env TF_DATA_DIR="$VDATA" AWS_SHARED_CREDENTIALS_FILE="$STUB" AWS_PROFILE=default \
          terraform -chdir="$MQ_TF_DIR" validate >&2; then pass terraform validate; else fail terraform validate; fi
   else
     fail terraform init; cat "$init_log" >&2
