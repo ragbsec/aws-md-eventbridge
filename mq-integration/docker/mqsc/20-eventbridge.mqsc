@@ -11,9 +11,11 @@
 *   poison messages (backed out > 3 times) --> ORDERS.DLQ
 *
 * NOTE: the image's 10-dev.mqsc also creates DEV.* objects (DEV.APP.SVRCONN,
-* DEV.QUEUE.1, ...) and puts users in OS groups: admin -> mqm, app -> mqclient.
-* The 'app' user's group is therefore 'mqclient' (NOT a custom 'mqapp' group);
-* AUTHREC below targets mqclient. Remove the DEV.* objects once happy
+* DEV.QUEUE.1, ...). In the 10.0.x image the users 'app' and 'admin' are NOT OS
+* users and there are NO OS groups (it runs unprivileged and checks passwords with
+* its own service), so AUTHREC below is granted to PRINCIPAL('app'), as the
+* image's own dev config does. An earlier draft used GROUP('mqclient'); MQ rejected
+* it (AMQ8871E) when tested against 10.0.0.5-r2. Remove the DEV.* objects once happy
 * (DELETE ... ) if you want a minimal surface.
 * =============================================================================
 
@@ -56,7 +58,12 @@ DEFINE CHANNEL('APP.SVRCONN') CHLTYPE(SVRCONN) REPLACE +
 
 * ---- Authentication (who are you) -------------------------------------------
 
-* Check user + password against the container OS users. CHCKCLNT(REQUIRED):
+* Check user + password. In the IBM MQ developer image (10.0.x) the users 'app'
+* and 'admin' are NOT OS users: the image runs unprivileged and validates them
+* through its own password service (set from MQ_APP_PASSWORD / MQ_ADMIN_PASSWORD).
+* So authorization below is granted to the USER NAME (PRINCIPAL), not to an OS
+* group. (Verified by running this file against the 10.0.0.5-r2 image.)
+* CHCKCLNT(REQUIRED):
 * clients MUST send valid credentials. ADOPTCTX(YES): the authenticated user
 * becomes the identity for authorization checks.
 DEFINE AUTHINFO('EB.AUTHINFO') AUTHTYPE(IDPWOS) REPLACE +
@@ -70,11 +77,13 @@ ALTER QMGR CONNAUTH('EB.AUTHINFO')
 SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS) +
     DESCR('Default deny') ACTION(REPLACE)
 
-* 2. Allow only user 'app' on APP.SVRCONN, running as MCAUSER 'app'
-*    (USERSRC(CHANNEL) = use the MCAUSER from this rule). Any address: the
-*    network boundary is the loopback binding / security group, not CHLAUTH.
+* 2. Allow only user 'app' on APP.SVRCONN. USERSRC(CHANNEL) = admit the client and
+*    run as the authenticated user (ADOPTCTX) since the channel's MCAUSER is blank.
+*    MCAUSER must NOT be given with USERSRC(CHANNEL) (MQ rejects it: AMQ8886E).
+*    Any other user has no matching rule, falls to the default deny above and is
+*    refused. The network boundary is the loopback binding / security group.
 SET CHLAUTH('APP.SVRCONN') TYPE(USERMAP) CLNTUSER('app') +
-    USERSRC(CHANNEL) MCAUSER('app') ADDRESS('*') +
+    USERSRC(CHANNEL) ADDRESS('*') +
     DESCR('Only app may use APP.SVRCONN') ACTION(REPLACE)
 
 * 3. Never allow MQ administrators over this application channel.
@@ -83,10 +92,11 @@ SET CHLAUTH('APP.SVRCONN') TYPE(BLOCKUSER) USERLIST('*MQADMIN') +
 
 * ---- Authorization (what may you do) ----------------------------------------
 
-* 'app' belongs to OS group mqclient. Least privilege: connect to QM1, and
+* Granted to the user name 'app' (this image has no OS groups; its own dev config
+* does the same with PRINCIPAL). Least privilege: connect (+inquire) on QM1, and
 * put/get/inq/browse on ORDERS.* queues only (ORDERS.** also matches nested names).
-SET AUTHREC OBJTYPE(QMGR) GROUP('mqclient') AUTHADD(CONNECT)
-SET AUTHREC PROFILE('ORDERS.**') OBJTYPE(QUEUE) GROUP('mqclient') +
+SET AUTHREC OBJTYPE(QMGR) PRINCIPAL('app') AUTHADD(CONNECT,INQ)
+SET AUTHREC PROFILE('ORDERS.**') OBJTYPE(QUEUE) PRINCIPAL('app') +
     AUTHADD(PUT,GET,INQ,BROWSE)
 
 * ---- Apply ------------------------------------------------------------------

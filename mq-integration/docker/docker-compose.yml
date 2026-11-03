@@ -15,9 +15,9 @@ services:
   mq:
     # Pinned to the IBM MQ Advanced for Developers tag chosen for this lab (10.0.0.5-r2).
     # Tag existence confirmed via the icr.io registry manifest API (linux/amd64, s390x,
-    # ppc64le: NO arm64, so t4g/Graviton hosts cannot run it). The image has NOT been
-    # pulled or started by us yet: the first start is the first proof that the
-    # 20-eventbridge.mqsc objects load. Avoid ":latest" (it moves).
+    # ppc64le: NO arm64, so t4g/Graviton hosts cannot run it). The image WAS pulled and
+    # started locally with 20-eventbridge.mqsc mounted: all 38 MQSC commands load with no
+    # errors and scripts/verify-mq-objects.sh --smoke passes. Avoid ":latest" (it moves).
     image: ${MQ_IMAGE:-icr.io/ibm-messaging/mq:10.0.0.5-r2}
     hostname: mq
     restart: unless-stopped
@@ -31,7 +31,7 @@ services:
       MQ_QMGR_NAME: QM1
       # The image natively creates two OS/MQ users from these variables:
       #   admin -> group mqm      (MQ admin + web console)
-      #   app   -> group mqclient (client connections; no admin rights)
+      #   app   -> client connections (no admin rights; rights are granted to the user name)
       MQ_ADMIN_PASSWORD: ${MQ_ADMIN_PASSWORD:?set MQ_ADMIN_PASSWORD in .env}
       MQ_APP_PASSWORD: ${MQ_APP_PASSWORD:?set MQ_APP_PASSWORD in .env}
       MQ_ENABLE_METRICS: "false"   # set "true" to expose Prometheus metrics on 9157 (not published here)

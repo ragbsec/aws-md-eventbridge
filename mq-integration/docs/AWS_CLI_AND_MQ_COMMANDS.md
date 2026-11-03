@@ -87,7 +87,7 @@ docker exec -i eb-mq-mq-1 runmqsc QM1 <<< "DISPLAY CHANNEL('APP.SVRCONN') ALL"
 docker exec -i eb-mq-mq-1 runmqsc QM1 <<< "DISPLAY CHSTATUS('APP.SVRCONN') CONNAME USERID MCAUSER"   # bridge connection
 docker exec -i eb-mq-mq-1 runmqsc QM1 <<< "DISPLAY CHLAUTH('APP.SVRCONN') ALL"
 docker exec -i eb-mq-mq-1 runmqsc QM1 <<< "DISPLAY AUTHINFO('EB.AUTHINFO') CHCKCLNT ADOPTCTX"
-docker exec -i eb-mq-mq-1 runmqsc QM1 <<< "DISPLAY AUTHREC PROFILE('ORDERS.**') OBJTYPE(QUEUE) GROUP('mqclient')"
+docker exec -i eb-mq-mq-1 runmqsc QM1 <<< "DISPLAY AUTHREC PROFILE('ORDERS.**') OBJTYPE(QUEUE) PRINCIPAL('app')"
 docker exec -i eb-mq-mq-1 runmqsc QM1 <<< "DISPLAY QMGR CONNAUTH DEADQ"
 ```
 

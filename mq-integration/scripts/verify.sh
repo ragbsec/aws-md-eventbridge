@@ -91,6 +91,13 @@ else
   find "$BRIDGE" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
 fi
 
+# ---- MQSC objects declared (offline) -----------------------------------------
+if [[ -f "${MQ_ROOT}/docker/mqsc/20-eventbridge.mqsc" ]]; then
+  if bash "${MQ_SCRIPTS}/verify-mq-objects.sh" --static >&2; then pass mqsc "all expected MQ objects declared"; else fail mqsc "an expected MQ object is missing from 20-eventbridge.mqsc"; fi
+else
+  skip mqsc "no mqsc file"
+fi
+
 # ---- docker compose ---------------------------------------------------------
 DOCKER_DIR="${MQ_ROOT}/docker"
 if ! command -v docker >/dev/null 2>&1; then

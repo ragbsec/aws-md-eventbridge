@@ -47,8 +47,8 @@ class MQClient:
             cd = mq.CD()
             cd.ChannelName = c.mq_channel.encode()
             cd.ConnectionName = f"{c.mq_host}({c.mq_port})".encode()
-            cd.ChannelType = mq.CMQC.MQCHT_CLNTCONN
-            cd.TransportType = mq.CMQC.MQXPT_TCP
+            cd.ChannelType = mq.CMQXC.MQCHT_CLNTCONN   # channel constants live in CMQXC, not CMQC
+            cd.TransportType = mq.CMQXC.MQXPT_TCP
             self._qmgr = mq.QueueManager(None)
             # user/password become an MQCSP (MQCSP_AUTH_USER_ID_AND_PWD), which
             # satisfies CHCKCLNT(REQUIRED). (ibmmq's CSP fields are CSPUserId /

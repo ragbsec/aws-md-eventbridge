@@ -126,6 +126,11 @@ queues="$(mq_sh 'echo "DISPLAY QLOCAL(ORDERS.*)" | runmqsc QM1' 2>/dev/null | gr
 missing=""
 for q in ORDERS.OUT ORDERS.IN ORDERS.DLQ; do [[ "$queues" == *"QUEUE(${q})"* ]] || missing+="${q} "; done
 [[ -z "$missing" ]] && pass "a3 queues exist (ORDERS.OUT, ORDERS.IN, ORDERS.DLQ)" || fail "a3 missing queues: ${missing}"
+if INSTANCE_ID="$INSTANCE_ID" OUTBOUND_QUEUE_URL="$OUTBOUND_QUEUE_URL" bash "${MQ_SCRIPTS}/verify-mq-objects.sh" >&2; then
+  pass "a4 queue manager and all MQ objects verified (verify-mq-objects.sh)"
+else
+  fail "a4 MQ objects verification failed (see FAIL lines above)"
+fi
 if [[ "$FAILED" -ne 0 ]]; then err "health checks failed — skipping functional steps"; exit 1; fi
 
 # ---- (b) MQ -> EventBridge ----------------------------------------------------

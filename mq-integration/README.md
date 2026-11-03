@@ -1,9 +1,16 @@
 # IBM MQ <-> Amazon EventBridge integration (Docker on EC2)
 
-> **Status: written from a design contract; not yet run on a live stack.**
-> Terraform, Docker, bridge and scripts were produced in parallel and have not
-> been exercised end to end. Anything below marked *unverified* needs a first
-> live run (`scripts/test.sh`) before you rely on it.
+> **Status: the MQ side and the bridge are tested locally; the AWS side is not yet
+> deployed.**
+>
+> | Proven (locally, against the real pinned image `icr.io/ibm-messaging/mq:10.0.0.5-r2`) | Not proven until a real deploy |
+> |---|---|
+> | QM1 starts and turns healthy; all 38 MQSC commands load with 0 errors | EC2 boot: `user_data`, Docker + Compose install, bundle download |
+> | Queue manager, queues, channel, auth objects exist with the right attributes (`verify-mq-objects.sh`, 29 checks) | The bridge **image build** inside Docker (the IBM client download URL and `ibmmq` build were verified on the host, not in `docker build`) |
+> | Client login through `APP.SVRCONN`: `app` works, wrong password refused, `admin` blocked | IAM/KMS permissions on the instance role; SQS and rule delivery; `mq-outbound-rule` pattern |
+> | The bridge's `MQClient` and both delivery loops against real MQ (`bridge/tests/live_*_check.py`, 17 checks) | End-to-end through real EventBridge (`scripts/test.sh`) |
+>
+> Re-run the local proof any time, with no AWS and no cost: `scripts/local-mq-check.sh`.
 
 ## What this is and why
 
@@ -109,8 +116,10 @@ convention: **READ-ONLY** (no AWS calls that change anything), **MUTATING**
 
 | Step | Command | Safety class |
 |---|---|---|
+| 0. Local MQ proof | `LOCAL_NETWORK=none bash mq-integration/scripts/local-mq-check.sh` (needs Docker; drop `LOCAL_NETWORK` on a normal host) | LOCAL ONLY: pulls the MQ image (~1 GB), starts a throwaway container, runs the MQ object + login checks, removes it. No AWS, no cost |
 | 1. Verify | `bash mq-integration/scripts/verify.sh` | OFFLINE / READ-ONLY (fmt, validate, lint, static checks; no AWS) |
 | 2. Deploy | `EXPECTED_AWS_ACCOUNT_ID=<12-digit id> bash mq-integration/scripts/deploy.sh --yes` | MUTATING, bills (EC2, EBS, SQS, S3, Secrets Manager). Needs explicit approval and the account ID confirmed from preflight |
+| 2b. Verify MQ objects (deploy.sh runs this automatically) | `bash mq-integration/scripts/verify-mq-objects.sh --smoke` | READ-ONLY on the host (+1 test message on ORDERS.DLQ, removed): queue manager, queues, channel, auth objects, client login |
 | 3. Test | `bash mq-integration/scripts/test.sh` | LIVE: puts test messages and events; adds no infrastructure |
 | 4. Destroy | `bash mq-integration/scripts/destroy.sh --yes` | MUTATING (deletes). Ends by running `leftover-check.sh` |
 | Anytime | `bash mq-integration/scripts/leftover-check.sh` | READ-ONLY sweep |
@@ -156,8 +165,8 @@ On the host (`/opt/eb-mq`, Docker Compose project `eb-mq`):
 | Queue manager | `QM1`, listener 1414 and console 9443 bound to `127.0.0.1` |
 | Queues | `ORDERS.OUT` (apps put, bridge gets; BOTHRESH 3, BOQNAME `ORDERS.DLQ`), `ORDERS.IN` (bridge puts, apps get), `ORDERS.DLQ` (backout target and QM dead-letter queue) |
 | Channel | `APP.SVRCONN` (SVRCONN) |
-| Auth objects | `EB.AUTHINFO` (IDPWOS, CHCKCLNT REQUIRED), CHLAUTH default-deny + `USERMAP` for `app` + `BLOCKUSER *MQADMIN`, AUTHREC for group `mqclient` on `ORDERS.**` |
-| Users | `admin` (group `mqm`, console), `app` (group `mqclient`, client connections) |
+| Auth objects | `EB.AUTHINFO` (IDPWOS, CHCKCLNT REQUIRED), CHLAUTH default-deny + `USERMAP` for `app` + `BLOCKUSER *MQADMIN`, AUTHREC for principal `app` on `ORDERS.**` |
+| Users | `admin` (web console) and `app` (client connections); virtual users of the image (no OS users or groups in 10.0.x), passwords from Secrets Manager via `.env` |
 | Volume | Docker volume `qm1data` (persistent messages) |
 | Marker | `/opt/eb-mq/READY` written when MQ is healthy |
 
@@ -173,7 +182,7 @@ mq-integration/
 │   └── templates/user-data.sh.tftpl   # first boot: install Docker, fetch bundle, generate secrets, compose up
 ├── docker/                       # docker-compose.yml, mqsc/20-eventbridge.mqsc, .env.example, test order
 ├── bridge/                       # Python bridge (ibmmq + boto3) and Dockerfile
-├── scripts/                      # verify.sh deploy.sh test.sh destroy.sh leftover-check.sh ssm-run.sh
+├── scripts/                      # verify.sh deploy.sh verify-mq-objects.sh local-mq-check.sh test.sh destroy.sh leftover-check.sh ssm-run.sh
 └── docs/
     ├── ARCHITECTURE.md          # flows, retry/backout, delivery semantics, shared-platform story
     ├── SECURITY.md              # threat model, TLS gap and how to close it
@@ -190,4 +199,9 @@ mq-integration/
 - `mq-outbound-rule` matches events whose `detail.origin` is absent OR not
   `ibm-mq` (anti-loop). The pattern follows the EventBridge docs but has not been
   exercised on a live bus yet.
-- Not yet run on a live stack.
+- The EC2 deployment and the AWS side (instance role, SQS, rule, end-to-end through
+  real EventBridge) have not run yet. See the status table at the top.
+- The MQ image runs unprivileged and has no OS users or groups; `app`/`admin` are
+  virtual users and rights are granted to the user name. `MQ_APP_PASSWORD` /
+  `MQ_ADMIN_PASSWORD` as environment variables are flagged "deprecated" by the image
+  in favour of Docker secrets; they work in 10.0.0.5-r2 (tested) but may not forever.

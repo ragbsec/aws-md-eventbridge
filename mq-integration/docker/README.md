@@ -7,8 +7,10 @@
 | `.env.example` | Template for `.env` (passwords, optional image/bind address) |
 | `mq-test-order.json` | Sample order valid against `schemas/prod.orders__OrderPlaced.json` |
 
-Users: the image creates `admin` (MQ_ADMIN_PASSWORD, group mqm, web console) and `app`
-(MQ_APP_PASSWORD, group mqclient). The MQSC grants mqclient only ORDERS.* access.
+Users: the image provides `admin` (MQ_ADMIN_PASSWORD, web console) and `app`
+(MQ_APP_PASSWORD, client connections). In the 10.0.x image these are not OS users and
+there are no OS groups; the MQSC grants the user name `app` only ORDERS.* access.
+Check it with `mq-integration/scripts/verify-mq-objects.sh --container <name> --smoke`.
 
 `LICENSE=accept` in the compose file is your acceptance of the IBM MQ developer
 license; read it (link in the compose comment) before running.

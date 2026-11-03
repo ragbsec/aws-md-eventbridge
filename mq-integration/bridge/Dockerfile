@@ -2,19 +2,19 @@
 #
 # IBM MQ <-> EventBridge bridge image.
 #
-# UNVERIFIED: the author had no network access to IBM when writing this file,
-# so the redistributable-client tarball URL pattern and default version below
-# are from memory. CONFIRM both against IBM's current download page
-# ("IBM MQ Redistributable Clients", file IBM-MQC-Redist-LinuxX64.tar.gz,
-# https://public.dhe.ibm.com/ibmdl/export/pub/software/websphere/messaging/mqdev/redist/)
-# and override with:  docker build --build-arg MQ_CLIENT_VERSION=<x.y.z.w> .
+# The IBM MQ C client comes from IBM's public "Redistributable Clients" directory:
+# https://public.dhe.ibm.com/ibmdl/export/pub/software/websphere/messaging/mqdev/redist/
+# (file <version>-IBM-MQC-Redist-LinuxX64.tar.gz). The default version below matches
+# the server image (icr.io/ibm-messaging/mq:10.0.0.5-r2) and was confirmed to exist in
+# that directory listing; an older default (9.4.2.0) returned HTTP 404 there.
+# Override with:  docker build --build-arg MQ_CLIENT_VERSION=<x.y.z.w> .
 # Review IBM's licence terms for the redistributable client before use.
 
 ARG PYTHON_IMAGE=python:3.12-slim
 
 # ---- stage 1: fetch the IBM MQ C client -----------------------------------
 FROM ${PYTHON_IMAGE} AS mqclient
-ARG MQ_CLIENT_VERSION=9.4.2.0
+ARG MQ_CLIENT_VERSION=10.0.0.5
 ARG MQ_CLIENT_URL=https://public.dhe.ibm.com/ibmdl/export/pub/software/websphere/messaging/mqdev/redist/${MQ_CLIENT_VERSION}-IBM-MQC-Redist-LinuxX64.tar.gz
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*

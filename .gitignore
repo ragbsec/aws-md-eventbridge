@@ -26,3 +26,8 @@ graft/.cache/
 **/.build/
 src/lambda/.build-producer/
 platform-global/builds/
+
+# Python bytecode / test caches (generated when scripts import helpers or run pytest)
+__pycache__/
+*.pyc
+.pytest_cache/

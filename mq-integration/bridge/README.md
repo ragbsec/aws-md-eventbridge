@@ -75,5 +75,17 @@ delivered nor deleted; configure a redrive policy/DLQ on the SQS queue.
 
     python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest
 
-Tests are offline (fake MQ, mocked boto3 clients, stubbed `ibmmq`). The Dockerfile downloads IBM's
-redistributable client; confirm `MQ_CLIENT_VERSION`/URL first (see comments in the file).
+Unit tests are offline (fake MQ, mocked boto3 clients, stubbed `ibmmq`).
+
+**Live checks against a real queue manager** (not pytest modules; no AWS needed) prove what mocks
+cannot: `tests/live_mq_check.py` (the `MQClient` wrapper: login, wrong password, backout settings,
+syncpoint, dead-letter move) and `tests/live_loop_check.py` (both delivery loops with fake AWS
+clients). They need the IBM MQ C client (`LD_LIBRARY_PATH=<client>/lib64`), the `ibmmq` package and
+a reachable queue manager with the objects from `docker/mqsc/20-eventbridge.mqsc`, e.g. started by
+`scripts/local-mq-check.sh` with `KEEP=1`. Both were run against `icr.io/ibm-messaging/mq:10.0.0.5-r2`
+(17 checks, all PASS) and caught a real bug the unit tests could not (channel constants live in
+`ibmmq.CMQXC`, not `CMQC`).
+
+The Dockerfile downloads IBM's redistributable client for `MQ_CLIENT_VERSION` (default `10.0.0.5`,
+confirmed to exist at the URL in the file; the previous default `9.4.2.0` returned HTTP 404). Review
+IBM's licence terms for the redistributable client before use.

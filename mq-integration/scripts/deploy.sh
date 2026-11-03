@@ -19,6 +19,7 @@
 #         INSTANCE_TYPE (t2|t3|t3a micro|small|medium; t4g rejected: x86_64 stack),
 #         VPC_ID, SUBNET_ID, MQ_IMAGE (optional overrides), MQ_MAX_INSTANCES (9),
 #         READY_TIMEOUT seconds (default 900)
+# After READY it runs verify-mq-objects.sh --smoke (QM1, queues, channel, auth, client login).
 # Safety class: CREATES BILLABLE AWS RESOURCES (EC2, IAM, SQS, S3, Secrets
 #         Manager, EventBridge rule). Tear down with destroy.sh.
 ###############################################################################
@@ -94,6 +95,11 @@ while :; do
   fi
   sleep 20
 done
+
+# ---- STEP 4: prove the queue manager + MQ objects exist -----------------------
+info "STEP 4 — verifying the queue manager and MQ objects (verify-mq-objects.sh --smoke)"
+INSTANCE_ID="$INSTANCE_ID" OUTBOUND_QUEUE_URL="$QUEUE_URL" bash "${MQ_SCRIPTS}/verify-mq-objects.sh" --smoke \
+  || die "the instance is up but MQ objects did NOT verify (see FAIL lines). Inspect with: ${SSM_CMD}  — then fix, or destroy with destroy.sh --yes (it still bills)"
 
 echo "======================================================================"
 echo " MQ INTEGRATION IS UP"
