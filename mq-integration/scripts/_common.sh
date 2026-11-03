@@ -23,9 +23,28 @@ export AWS_PAGER=""
 # A raw key in the environment would override --profile; drop it.
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 
+# mq_global_endpoint_values — print "<endpoint-id> <secondary-bus-arn> <secondary-kms-arn>" read from the
+# lab's platform-global / platform-secondary roots (deployer credentials; read-only).
+mq_global_endpoint_values() {
+  local id bus key
+  id="$(  unset AWS_PROFILE; export AWS_SHARED_CREDENTIALS_FILE="$DEPLOYER_CREDS_FILE"; terraform -chdir="${LAB_ROOT}/platform-global"    output -raw global_endpoint_id 2>/dev/null)" || true
+  bus="$( unset AWS_PROFILE; export AWS_SHARED_CREDENTIALS_FILE="$DEPLOYER_CREDS_FILE"; terraform -chdir="${LAB_ROOT}/platform-secondary" output -raw bus_arn 2>/dev/null)" || true
+  key="$( unset AWS_PROFILE; export AWS_SHARED_CREDENTIALS_FILE="$DEPLOYER_CREDS_FILE"; terraform -chdir="${LAB_ROOT}/platform-secondary" output -raw kms_key_arn 2>/dev/null)" || true
+  [[ -n "$id" && -n "$bus" && -n "$key" ]] || die "could not read the global endpoint id / secondary bus / key from the lab outputs: deploy the main lab with ENABLE_GLOBAL_ENDPOINT=true first"
+  printf '%s %s %s\n' "$id" "$bus" "$key"
+}
+
 # Terraform -var flags: only pass optional overrides when the caller set them.
+# GLOBAL_ENDPOINT=true makes the bridge publish THROUGH the global endpoint (EB_ENDPOINT_ID, SigV4a)
+# and grants the instance role PutEvents/KMS on the failover region's bus and key.
 mq_tf_vars() {
   MQ_TF_VARS=(-var "region=${REGION}" -var "bus_name=${BUS_NAME}" -var "event_source=${EVENT_SOURCE}")
+  if [[ "${GLOBAL_ENDPOINT:-false}" == "true" ]]; then
+    local gid gbus gkey
+    read -r gid gbus gkey <<<"$(mq_global_endpoint_values)"
+    MQ_TF_VARS+=(-var "eb_endpoint_id=${gid}" -var "failover_bus_arns=[\"${gbus}\"]" -var "failover_kms_key_arns=[\"${gkey}\"]")
+    info "global endpoint ON: bridge publishes via endpoint ${gid}; failover bus/key granted"
+  fi
   [[ -n "${INSTANCE_TYPE:-}" ]] && MQ_TF_VARS+=(-var "instance_type=${INSTANCE_TYPE}")
   [[ -n "${VPC_ID:-}"        ]] && MQ_TF_VARS+=(-var "vpc_id=${VPC_ID}")
   [[ -n "${SUBNET_ID:-}"     ]] && MQ_TF_VARS+=(-var "subnet_id=${SUBNET_ID}")

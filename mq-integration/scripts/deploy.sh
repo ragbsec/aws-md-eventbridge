@@ -13,7 +13,10 @@
 #   instance limit                existing EC2 instances + 1 must be <= 9 (stopped count,
 #                                 terminated do not); counted read-only, fails closed
 #
-# Usage:  EXPECTED_AWS_ACCOUNT_ID=123456789012 mq-integration/scripts/deploy.sh --yes
+# Usage:  EXPECTED_AWS_ACCOUNT_ID=123456789012 mq-integration/scripts/deploy.sh --yes [--global-endpoint]
+#         --global-endpoint  the bridge publishes THROUGH the EventBridge global endpoint (needs the
+#                            main lab built with ENABLE_GLOBAL_ENDPOINT=true). Without it the flag is
+#                            reset: re-run with it every time you re-apply.
 # Env:    OPERATOR_PROFILE (default: default), REGION (us-east-1),
 #         BUS_NAME (eb-prod-orders), EVENT_SOURCE (prod.orders),
 #         INSTANCE_TYPE (t2|t3|t3a micro|small|medium; t4g rejected: x86_64 stack),
@@ -30,7 +33,8 @@ YES=0
 for a in "$@"; do
   case "$a" in
     --yes) YES=1 ;;
-    *) die "unknown argument: $a (usage: deploy.sh --yes)" ;;
+    --global-endpoint) export GLOBAL_ENDPOINT=true ;;
+    *) die "unknown argument: $a (usage: deploy.sh --yes [--global-endpoint])" ;;
   esac
 done
 [[ "$YES" -eq 1 ]] || die "refusing to deploy without --yes (this creates billable AWS resources)"
