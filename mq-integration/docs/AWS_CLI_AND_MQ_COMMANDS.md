@@ -11,10 +11,10 @@ anything.
 > - 🟡 **LIVE** — publishes events or puts/gets messages. No new infrastructure; tiny cost.
 > - 🔴 **MUTATING** — changes or deletes something. Each has a cleanup/rollback note.
 
-> **Status of every command in this file: not yet run on a live stack.**
-> They are written from the Terraform, MQSC and compose files and the AWS/IBM
-> CLI syntax. Treat all as unverified until you have run them once, and fix
-> this file with what you learn. Never print or paste passwords: the commands
+> **Status of the commands in this file.** The scripts that automate the same steps
+> (`verify-mq-objects.sh`, `test.sh`, `test-global-endpoint.sh`) ran live and use the same `runmqsc`, `amqsput`/`amqsget`,
+> `put-events` and SQS calls. The commands **in this file** were not each run by hand: treat them as unverified until
+> you have run them once, and fix this file with what you learn. Never print or paste passwords: the commands
 > read them into a variable and `unset` it.
 
 ---

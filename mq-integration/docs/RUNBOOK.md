@@ -1,7 +1,9 @@
 # Runbook — operating the IBM MQ <-> EventBridge bridge
 
-> **Not yet run on a live stack.** Every procedure is written from the design
-> and the files in this folder. Safety markers: 🟢 READ-ONLY, 🟡 LIVE (sends
+> **Status.** The checks this runbook points to (`verify-mq-objects.sh`, `test.sh`,
+> `test-global-endpoint.sh`) were run live. The day-2 procedures themselves (secret rotation, DLQ
+> replay, image upgrade, restart procedures) were written from the design and have **not** been
+> exercised. Safety markers: 🟢 READ-ONLY, 🟡 LIVE (sends
 > messages/events, adds no infrastructure), 🔴 MUTATING (changes or restarts
 > things).
 

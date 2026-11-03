@@ -1,0 +1,314 @@
+* =============================================================================
+* 20-eventbridge-cluster.mqsc.example  -  PRODUCTION TEMPLATE for the EventBridge bridge
+*
+* *** UNTESTED TEMPLATE. ***  It has never been loaded into any queue manager.
+* The ONLY tested MQSC in this repo is docker/mqsc/20-eventbridge.mqsc (the lab file):
+* it loaded 38/38 commands, 0 errors, on icr.io/ibm-messaging/mq:10.0.0.5-r2 [TESTED].
+* Everything in THIS file is [DESIGN] (derived from the lab file) or [VERIFY]
+* (general IBM MQ knowledge you must confirm for YOUR MQ version and edition).
+*
+* LEGEND  [TESTED] we ran it live (only statements about the lab file / image)
+*         [DESIGN] reasoned from the repo, not run
+*         [VERIFY] general IBM MQ knowledge: confirm in the IBM docs for your version
+*
+* This file is NOT loadable as it stands: it contains <PLACEHOLDERS> in angle
+* brackets and several ALTERNATIVE blocks (commented out). The ".example" suffix
+* keeps it from being picked up by anything that globs *.mqsc. It lives under
+* docs/ on purpose: do NOT move it under docker/ or terraform/ (those are zipped
+* into the lab EC2 bundle).
+*
+* WHAT TO REPLACE (search for "<")
+*   <CLUSTER>             cluster name, the one your MQ team already runs
+*   <CIPHERSPEC>          TLS CipherSpec, e.g. a TLS 1.2 / 1.3 spec your policy allows
+*                         (see ../../../docs/TLS_POLICY.md)           [VERIFY exact names]
+*   <CERT_LABEL>          label of the queue manager's certificate in its key repository
+*   <KEY_REPOSITORY>      key repository path WITHOUT extension (.kdb/.sth)
+*   <BRIDGE_DN>           subject DN of the BRIDGE's client certificate (SSLPEERMAP)
+*   <ISSUER_DN>           DN of the CA that issued it (SSLCERTI), pins the issuer
+*   <BRIDGE_USER>         identity the bridge runs as (LDAP short user / OS user / MCAUSER)
+*   <BRIDGE_GROUP>        group that holds the bridge identity (AUTHREC target)
+*   <BRIDGE_ADDRESS>      address pattern of where the bridge connects from
+*   <LDAP_HOST> <LDAP_BIND_DN> <LDAP_BASE_DN_*> ...  LDAP AUTHINFO variant only
+*   EB.AUTHINFO           the AUTHINFO name; rename to your convention (bridge does not care)
+*   MAXINST/MAXINSTC      sizing, see the note at the channel
+*
+* OBJECT NAMES ARE THE LAB'S ON PURPOSE: ORDERS.OUT, ORDERS.IN, ORDERS.DLQ,
+* APP.SVRCONN. The bridge reads them from MQ_QUEUE_TO_EB / MQ_QUEUE_FROM_EB /
+* MQ_CHANNEL, so keeping them means NO bridge config change. If your standards
+* force other names, change both here and in the bridge env.
+*
+* WHERE TO RUN IT   (details: ../PRODUCTION_MQ_CLUSTER.md, which owns the topology)
+*   Uniform cluster   run it on EVERY queue manager. Queue definitions with
+*                     CLUSTER() are advertised to the cluster, but AUTHREC, CHLAUTH,
+*                     AUTHINFO, CONNAUTH, the channel and the local ORDERS.DLQ are
+*                     per queue manager and are NOT propagated by the cluster.
+*                     [VERIFY] that nothing here is shared automatically.
+*   Native HA         run it once against the ACTIVE instance; queue, channel,
+*                     CHLAUTH and AUTHREC definitions live in the queue manager's
+*                     replicated data. NOT replicated: qm.ini, the TLS key
+*                     repository files, OS users/groups, anything in the container
+*                     image or ConfigMaps. Make sure every replica Pod/VM has the
+*                     key repository and the same MQSC at start-up.      [VERIFY]
+*   Both              the commands are written re-runnable (REPLACE / ACTION(REPLACE)),
+*                     like the lab file, so a pipeline can re-apply them.
+*                     [DESIGN] (the lab file's re-runnability is [TESTED] only for
+*                     the lab's own commands).
+*
+* CLUSTER CHANNELS (CLUSRCVR / CLUSSDR), full repositories and the cluster's own
+* TLS are NOT in this file: they belong to the MQ team's cluster build.
+*
+* NEVER put real passwords in this file or in git. LDAPPWD below is a placeholder:
+* substitute it at deploy time from your secret store.
+* =============================================================================
+
+
+* ---- 1. Queues --------------------------------------------------------------
+*
+* [DESIGN] CLUSTER('<CLUSTER>') advertises the queue to the whole cluster. Remember
+* what that means for CONSUMERS: every queue manager that hosts an instance of
+* ORDERS.OUT needs a bridge consumer, otherwise messages the workload balancer
+* sends to that instance wait there unread. Same for ORDERS.IN and the apps that
+* read it. (Roadmap item R3 in ../BRIDGE_PRODUCTION_ROADMAP.md.)
+* Native HA only (no cluster): delete the CLUSTER() and DEFBIND() lines.
+*
+* DEFBIND(NOTFIXED) [VERIFY]: lets a producer's MQOPEN choose the instance per
+* message instead of binding to one for the life of the handle. The lab bridge opens
+* ORDERS.IN for output without MQOO_BIND_NOT_FIXED, so DEFBIND(OPEN), the default,
+* would bind each bridge connection to one instance (see roadmap R3). Whether
+* DEFBIND(NOTFIXED) is honoured when the application opens with MQOO_BIND_AS_Q_DEF
+* (the default open option) is standard MQ behaviour but is [VERIFY].
+*
+* Persistence, MAXDEPTH, BOTHRESH and BOQNAME are the lab's values.
+* BOTHRESH/BOQNAME: MQ does NOT move messages itself. It counts rollbacks in the
+* message's BackoutCount; the CONSUMER (the bridge) must compare it to BOTHRESH and
+* re-put to BOQNAME. The bridge reads both attributes from the queue at connect time
+* (MQINQ, so it needs INQ authority on the queue). [TESTED] in the lab, live_mq_check.py
+* check 3 and 6. Backout counts are stored per message on the queue manager that
+* holds the message. [VERIFY] that BackoutCount survives a Native HA failover.
+DEFINE QLOCAL('ORDERS.OUT') REPLACE +
+       DESCR('Orders from apps; bridge consumes to EventBridge') +
+       CLUSTER('<CLUSTER>') DEFBIND(NOTFIXED) +
+       DEFPSIST(YES) MAXDEPTH(50000) +
+       BOTHRESH(3) BOQNAME('ORDERS.DLQ')
+
+* Events delivered from EventBridge toward applications; the bridge puts here.
+DEFINE QLOCAL('ORDERS.IN') REPLACE +
+       DESCR('EventBridge events delivered to apps by the bridge') +
+       CLUSTER('<CLUSTER>') DEFBIND(NOTFIXED) +
+       DEFPSIST(YES) MAXDEPTH(50000)
+
+* Backout queue and dead-letter queue. DELIBERATELY NOT CLUSTERED: BOQNAME is
+* resolved on the queue manager the bridge is connected to, and a poison message
+* must stay on the queue manager that held it. Define it on EVERY queue manager.
+* [DESIGN] Inspect and replay manually.
+DEFINE QLOCAL('ORDERS.DLQ') REPLACE +
+       DESCR('Backout and dead-letter queue') +
+       DEFPSIST(YES) MAXDEPTH(50000)
+
+* Queue manager dead-letter queue (messages MQ itself cannot deliver).
+* The lab shares ORDERS.DLQ between "poison" and "undeliverable". [DESIGN] Production
+* is cleaner with a separate DEADQ (for example SYSTEM.DEAD.LETTER.QUEUE or your
+* standard) so cluster delivery failures do not mix with poison orders. If you
+* change DEADQ, scripts/verify-mq-objects.sh will report it (it expects ORDERS.DLQ).
+ALTER QMGR DEADQ('ORDERS.DLQ')
+
+
+* ---- 2. Queue manager TLS settings ------------------------------------------
+*
+* [VERIFY] Key repository path and certificate label of the queue manager's own
+* certificate. In containers / Native HA the key repository is usually mounted from
+* a secret; the path is then set for you. Skip these two lines if your platform
+* already sets them. After a certificate rotation run REFRESH SECURITY TYPE(SSL)
+* (see the end of the file).
+* ALTER QMGR SSLKEYR('<KEY_REPOSITORY>') CERTLABL('<CERT_LABEL>')
+
+
+* ---- 3. Client channel (SVRCONN) with TLS -----------------------------------
+*
+* Same name as the lab. Additions: SSLCIPH + SSLCAUTH(REQUIRED) (mutual TLS: the
+* server demands a client certificate; the bridge must present one).
+*
+* [VERIFY] SSLCIPH takes a CipherSpec NAME (not a TLS version). Pick one allowed by
+* your policy and by the MQ version; "ANY_TLS12_OR_HIGHER" style generic specs exist
+* in recent versions (the lab's SECURITY.md mentions it) but confirm for yours.
+* [VERIFY] CERTLABL on the channel selects a per-channel certificate; omit it to use
+* the queue manager's CERTLABL.
+*
+* MAXINST / MAXINSTC [DESIGN]: one bridge process opens ONE connection per loop, so
+* two per process. MAXINSTC is a limit PER CLIENT ADDRESS. If the bridge runs on
+* ECS/EKS behind a NAT gateway, every task shows up with the NAT gateway's address and
+* shares one MAXINSTC budget. Size = 2 x (max bridge tasks) + headroom for rolling
+* deploys, and double it if a task is replaced while the old one still holds its
+* connections. The lab's 20/10 is a lab value.
+* SHARECNV(10), HBINT(300) are the lab's values. [VERIFY] KAINT / HBINT interplay with
+* your load balancer idle timeout (an idle TCP timeout shorter than the heartbeat
+* silently drops the connection).
+DEFINE CHANNEL('APP.SVRCONN') CHLTYPE(SVRCONN) REPLACE +
+       DESCR('Application client channel (bridge and apps), TLS required') +
+       MCAUSER(' ') MAXINST(<MAXINST>) MAXINSTC(<MAXINSTC>) +
+       SHARECNV(10) HBINT(300) +
+       SSLCIPH('<CIPHERSPEC>') SSLCAUTH(REQUIRED)
+* Optional [VERIFY]: CERTLABL('<CERT_LABEL>') on the line above.
+
+
+* ---- 4. Authentication: who are you (AUTHINFO + CONNAUTH) -------------------
+*
+* Choose ONE of the three blocks. All use CHCKCLNT(REQUIRED): a client MUST send a
+* valid user id + password in its connection request (MQCSP). The bridge does this
+* today: MQClient.connect() always passes user= and password= [TESTED against the
+* lab IDPWOS variant: right password accepted, wrong password refused with 2035].
+*
+* ADOPTCTX(YES) makes the authenticated user the identity for authorization, which is
+* why the lab grants AUTHREC to the authenticated name.            [TESTED in the lab]
+*
+* IMPORTANT [VERIFY]: CHCKCLNT(REQUIRED) means a certificate-only client (no password)
+* is refused. If you want the bridge to authenticate with its certificate ALONE (no
+* MQ_PASSWORD), the AUTHINFO needs CHCKCLNT(OPTIONAL) (or the channel needs another
+* arrangement) and the bridge needs a code change, roadmap item R6. Do not weaken
+* CHCKCLNT without that decision. With CHCKCLNT(OPTIONAL), identity then comes from
+* the certificate via the SSLPEERMAP rule in section 5.
+*
+* --- 4a. OS users (IDPWOS) -- same as the lab, but with REAL OS users/groups ---
+* [TESTED in the lab image, where the users are virtual]. On a real OS the user and
+* group must exist on EVERY machine/Pod that runs a queue manager instance (they are
+* NOT replicated by Native HA or by the cluster). [VERIFY]
+DEFINE AUTHINFO('EB.AUTHINFO') AUTHTYPE(IDPWOS) REPLACE +
+       CHCKCLNT(REQUIRED) CHCKLOCL(OPTIONAL) ADOPTCTX(YES) +
+       DESCR('OS user/password check for client connections')
+*
+* --- 4b. LDAP (IDPWLDAP) -- commented alternative; replace 4a with this -------
+* [VERIFY] EVERY attribute below. Written from memory of the IBM MQ AUTHINFO
+* IDPWLDAP definition; attribute names and limits (for example SHORTUSR is the MQ
+* identity and is limited in length) differ by version. UNSURE: the exact AUTHORMD
+* values and whether your version needs more fields. Check the IBM MQ "DEFINE AUTHINFO
+* (IDPWLDAP)" page before use.
+* SECCOMM(YES): TLS to the LDAP server (the queue manager's key repository must trust
+* the LDAP server's CA). LDAPPWD: NEVER commit; substitute at deploy time.
+* RISK [DESIGN]: with an LDAP account-lockout policy, a bridge that retries a wrong
+* password in a loop can lock its own account (the bridge reconnects with backoff
+* forever on ANY MQ error today, roadmap item R5), and so can live_mq_check.py check 2
+* (it deliberately sends a wrong password).
+* DEFINE AUTHINFO('EB.AUTHINFO') AUTHTYPE(IDPWLDAP) REPLACE +
+*        DESCR('LDAP user/password check for client connections') +
+*        CONNAME('<LDAP_HOST>(636)') SECCOMM(YES) +
+*        LDAPUSER('<LDAP_BIND_DN>') LDAPPWD('<SUBSTITUTE_AT_DEPLOY_TIME>') +
+*        BASEDNU('<LDAP_BASE_DN_USERS>') CLASSUSR('<LDAP_USER_OBJECT_CLASS>') +
+*        USRFIELD('<LDAP_LOGIN_ATTRIBUTE>') SHORTUSR('<LDAP_SHORT_NAME_ATTRIBUTE>') +
+*        AUTHORMD(SEARCHGRP) BASEDNG('<LDAP_BASE_DN_GROUPS>') +
+*        CLASSGRP('<LDAP_GROUP_OBJECT_CLASS>') FINDGRP('<LDAP_MEMBER_ATTRIBUTE>') +
+*        GRPFIELD('<LDAP_GROUP_NAME_ATTRIBUTE>') +
+*        CHCKCLNT(REQUIRED) CHCKLOCL(OPTIONAL) ADOPTCTX(YES)
+*
+* --- 4c. Certificate identity only: see the note above (CHCKCLNT(OPTIONAL)) -----
+* Not defined here because the bridge cannot do it yet (R6). [DESIGN]
+
+* Attach it to the queue manager. [TESTED in the lab for EB.AUTHINFO]
+ALTER QMGR CONNAUTH('EB.AUTHINFO')
+
+
+* ---- 5. Channel authentication: who may connect, from where ------------------
+*
+* [VERIFY] CHLAUTH rules are evaluated per channel; the most specific match wins.
+* Check the precedence between ADDRESSMAP, USERMAP and SSLPEERMAP for your version.
+*
+* 5.1 DEFAULT DENY.
+* The lab denies EVERYTHING on EVERY channel: CHLAUTH('*') ... NOACCESS. [TESTED in the lab]
+* On a SHARED production queue manager that global rule would also hit other
+* applications' channels and possibly cluster channels, and the product ships its own
+* default rules. [VERIFY] Run DISPLAY CHLAUTH(*) ALL first and do NOT blindly REPLACE
+* the global rule. The safe production form is deny-by-default for THIS channel only:
+SET CHLAUTH('APP.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS) +
+    DESCR('Default deny on the bridge/app channel') ACTION(REPLACE)
+* The lab's global form, if (and only if) your MQ team agrees:
+* SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS) +
+*     DESCR('Default deny') ACTION(REPLACE)
+*
+* 5.2 ALLOW ONLY THE BRIDGE, by its certificate (mutual TLS).
+* SSLPEERMAP maps a client certificate's subject DN to an identity. USERSRC(MAP) +
+* MCAUSER = run as <BRIDGE_USER>. [VERIFY] syntax and DN formatting (attribute
+* order/case/quoting rules for SSLPEER). SSLCERTI pins the ISSUER so a certificate with
+* the same subject from another CA does not match.            [VERIFY it exists in your version]
+* ADDRESS: restrict to where the bridge connects from. [VERIFY] CHLAUTH ADDRESS takes
+* IP addresses/patterns with * and ranges; it does NOT take CIDR notation (/24). If the
+* bridge egresses through a NAT gateway, use the NAT gateway's public/private address.
+* One rule per allowed identity; add NOTHING else here.
+SET CHLAUTH('APP.SVRCONN') TYPE(SSLPEERMAP) +
+    SSLPEER('<BRIDGE_DN>') SSLCERTI('<ISSUER_DN>') +
+    USERSRC(MAP) MCAUSER('<BRIDGE_USER>') ADDRESS('<BRIDGE_ADDRESS>') +
+    DESCR('Only the EventBridge bridge certificate may use APP.SVRCONN') ACTION(REPLACE)
+*
+* 5.2b ALTERNATIVE or ADDITIONAL: map by the password user (the lab's way).
+* [TESTED in the lab: USERSRC(CHANNEL) with no MCAUSER; giving MCAUSER here is rejected
+* with AMQ8886E]. With USERSRC(MAP) the MCAUSER is allowed. [VERIFY]
+* SET CHLAUTH('APP.SVRCONN') TYPE(USERMAP) CLNTUSER('<BRIDGE_USER>') +
+*     USERSRC(CHANNEL) ADDRESS('<BRIDGE_ADDRESS>') +
+*     DESCR('Only the bridge user may use APP.SVRCONN') ACTION(REPLACE)
+*
+* Application clients (the producers/consumers of ORDERS.*) are NOT covered by this
+* file. Give each application its own SSLPEERMAP/USERMAP rule (or its own channel) so
+* the bridge identity is never shared. [DESIGN]
+*
+* 5.3 NEVER ALLOW ADMINISTRATORS on this channel. [TESTED in the lab: admin refused]
+SET CHLAUTH('APP.SVRCONN') TYPE(BLOCKUSER) USERLIST('*MQADMIN') +
+    DESCR('No admin users on the app channel') ACTION(REPLACE)
+
+
+* ---- 6. Authorization: what may the bridge identity do (AUTHREC) -------------
+*
+* Grant to a GROUP in production (add/remove members without touching MQ). The lab
+* could not use a group: that image has no OS groups, and GROUP('mqclient') was rejected
+* with AMQ8871E [TESTED]. In production the group must EXIST where the queue manager
+* resolves groups (OS, or LDAP via AUTHORMD), or you get the same error. [VERIFY]
+* If you map the certificate to an MCAUSER (5.2), the identity checked is the MCAUSER;
+* if you use password auth with ADOPTCTX(YES), it is the authenticated user. Make
+* sure the SAME identity is a member of <BRIDGE_GROUP>.            [VERIFY]
+*
+* Least privilege, per bridge call (bridge/src/bridge/mq_client.py):
+*
+*   MQCONN  (MQClient.connect)                         -> CONNECT on the queue manager
+*   MQINQ   on the open ORDERS.OUT handle              -> INQ on ORDERS.OUT
+*             (_load_backout_settings reads BOTHRESH, BOQNAME; opened with MQOO_INQUIRE)
+*   MQOPEN INPUT_SHARED ORDERS.OUT, MQGET (get)        -> GET (and INQ above) on ORDERS.OUT
+*   MQOPEN OUTPUT ORDERS.IN, MQPUT (put_persistent)    -> PUT on ORDERS.IN
+*   MQOPEN OUTPUT backout queue, MQPUT (move_to_backout_queue)
+*                                                      -> PUT on ORDERS.DLQ
+*   MQCMIT / MQBACK                                    -> no object authority
+*
+* BROWSE is NOT used by the bridge. The lab grants PUT,GET,INQ,BROWSE on ORDERS.** only
+* because the lab's live checks and operators use the same user; production should
+* not. If you keep BROWSE, scripts/verify-mq-objects.sh (lab) expects it, but it is a
+* lab convenience. [DESIGN]
+*
+* Production-grade grants. [VERIFY] SET AUTHREC syntax and that PUT-only on a queue is
+* enough for the backout re-put with your queue's attributes.
+SET AUTHREC OBJTYPE(QMGR) GROUP('<BRIDGE_GROUP>') AUTHADD(CONNECT,INQ)
+SET AUTHREC PROFILE('ORDERS.OUT') OBJTYPE(QUEUE) GROUP('<BRIDGE_GROUP>') +
+    AUTHADD(GET,INQ)
+SET AUTHREC PROFILE('ORDERS.IN')  OBJTYPE(QUEUE) GROUP('<BRIDGE_GROUP>') +
+    AUTHADD(PUT)
+SET AUTHREC PROFILE('ORDERS.DLQ') OBJTYPE(QUEUE) GROUP('<BRIDGE_GROUP>') +
+    AUTHADD(PUT)
+*
+* The lab's broader single rule (what the tested live checks need), shown for
+* comparison only. [TESTED in the lab with PRINCIPAL('app')]
+* SET AUTHREC PROFILE('ORDERS.**') OBJTYPE(QUEUE) GROUP('<BRIDGE_GROUP>') +
+*     AUTHADD(PUT,GET,INQ,BROWSE)
+*
+* CONNECT on the QMGR is required to connect at all. INQ on the QMGR is what the lab
+* grants; the bridge itself never inquires the QMGR object, so INQ there is probably
+* unnecessary. [DESIGN] Keep it only if you see a failure without it.
+*
+* Clustered queues [VERIFY]: authority is checked against the queue name on the queue
+* manager the application connects to (and by the QM, with its own authority, for the
+* cluster transmission), so these AUTHREC lines are needed on EVERY queue manager the
+* bridge may connect to.
+
+
+* ---- 7. Apply ---------------------------------------------------------------
+*
+* [TESTED in the lab: REFRESH SECURITY TYPE(CONNAUTH)]. After changing certificates, the
+* key repository, SSLPEER rules or the CipherSpec also refresh TLS. [VERIFY]
+* In a uniform cluster run these on every queue manager; in Native HA on the active one.
+REFRESH SECURITY TYPE(CONNAUTH)
+REFRESH SECURITY TYPE(SSL)
+* CHLAUTH and AUTHREC changes take effect without a refresh in most versions. [VERIFY]

@@ -1,8 +1,10 @@
 # Architecture — IBM MQ <-> EventBridge bridge
 
-> **Not yet run on a live stack.** Behaviour below is the designed behaviour
-> from the integration contract and the Terraform/MQSC written so far. Confirm
-> with `scripts/test.sh` on a first deploy.
+> **Status.** The core flows below were exercised live on EC2 (`scripts/test.sh`, 18 checks;
+> `scripts/test-global-endpoint.sh --failover --confirm`): MQ -> EventBridge, EventBridge -> SQS -> MQ,
+> the loop guard, poison -> `ORDERS.DLQ`, and MQ -> EventBridge through the global endpoint including
+> failover and fail back. Statements marked *untested*, *unverified* or *not built* have not been run.
+> What is and is not covered per failure scenario: [`RESILIENCE_AND_LIMITATIONS.md`](RESILIENCE_AND_LIMITATIONS.md).
 
 ## 1. Components
 
@@ -81,7 +83,7 @@ sequenceDiagram
   else put fails
     Br->>MQ: MQBACK
     Note over Br,Q: no delete; message reappears after visibility timeout
-    Q->>D: after 5 receives (maxReceiveCount) moved to DLQ
+    Q->>D: if it keeps being received but never deleted: after 5 receives (maxReceiveCount) moved to DLQ
   end
 ```
 
@@ -102,7 +104,7 @@ again: a duplicate on `ORDERS.IN` (at-least-once).
 | EventBridge `PutEvents` rejects an entry (`FailedEntryCount` > 0) or throttles | MQ rollback; message retried on next get | Back on `ORDERS.OUT` |
 | Bridge or host crash mid-flow 1 | Uncommitted unit of work is rolled back by MQ on disconnect | Back on `ORDERS.OUT`; possible duplicate event |
 | Poison message (not JSON, missing `orderId`, repeatedly failing) | Each rollback increments `BACKCOUNT`. MQ does **not** move messages itself: the bridge checks `BACKCOUNT >= BOTHRESH` (3) and moves the message to `BOQNAME` (`ORDERS.DLQ`) in a committed unit of work | `ORDERS.DLQ` — inspect and replay manually (RUNBOOK §5) |
-| MQ unavailable during flow 2 | Put fails, no SQS delete | SQS retries; after 5 receives the message moves to `eb-mq-outbound-dlq` |
+| MQ unavailable during flow 2 | The bridge cannot connect, so it does **not poll SQS**; a message already received is not deleted and reappears after the visibility timeout | Events wait in `eb-mq-outbound` up to the 4-day retention and then **expire silently** (no DLQ); only a message that is repeatedly received but not deleted (failed put while connected, non-JSON) reaches `eb-mq-outbound-dlq` after 5 receives. See [`RESILIENCE_AND_LIMITATIONS.md`](RESILIENCE_AND_LIMITATIONS.md) S5 |
 | EventBridge cannot deliver to SQS (policy, KMS, deleted queue) | Rule target retry policy, then the target DLQ | `eb-mq-outbound-dlq` |
 | Bridge cannot reach AWS (IMDS hop limit, IAM) | Both loops fail; MQ messages stay queued, SQS messages stay visible-after-timeout | Nothing lost; fix and restart |
 
@@ -169,15 +171,23 @@ the bridge call `PutEvents` with `EndpointId`.
 
 - **Flow 1** then publishes through the global endpoint and survives a primary
   region impairment: events go to the secondary bus, where the secondary-region
-  rules process them.
+  rules process them. **[TESTED]** live: the bridge published with `EndpointId`,
+  the order replicated to the secondary region, and in a failover drill Route 53
+  reported the primary Unhealthy after 97 s and an MQ order was received natively
+  in `us-west-2` 104 s later with no bridge restart; failback worked. See
+  [`RESILIENCE_AND_LIMITATIONS.md`](RESILIENCE_AND_LIMITATIONS.md).
 - **SigV4a is required**, which needs the `awscrt` package in the bridge
   image. Without it boto3 raises `MissingDependencyException`. Read §2 of
   [`../../docs/CICD_AND_OPERATIONS.md`](../../docs/CICD_AND_OPERATIONS.md) first.
 - **Flow 2 is not made region-resilient.** `mq-outbound-rule` and
-  `eb-mq-outbound` exist only in the one region this stack is deployed to. If
-  that region fails over, the secondary bus has no rule feeding MQ. Closing the
-  gap would need the same rule + queue in the second region and a bridge poll
-  of both queues (not built).
+  `eb-mq-outbound` exist only in the one region this stack is deployed to
+  (absence in `us-west-2` **[TESTED]**), so after an endpoint failover the
+  secondary bus has no rule feeding MQ. Flow 2 was tested only for events
+  published on the regional bus, not through the endpoint. A deferred design
+  (rule + queue + DLQ in the second region, a bridge that polls both queues,
+  `region` filters to avoid duplicates) is **[DESIGN]**, not built; a whole-region
+  outage of the MQ host is out of scope by decision. Details:
+  [`RESILIENCE_AND_LIMITATIONS.md`](RESILIENCE_AND_LIMITATIONS.md).
 - The instance policy allows `events:PutEvents` on the bus ARN; the
   global endpoint also needs the replication role and bus in both regions to
   exist (platform-global). Duplicates after failover/failback are possible;

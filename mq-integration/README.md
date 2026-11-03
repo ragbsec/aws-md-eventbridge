@@ -1,16 +1,16 @@
 # IBM MQ <-> Amazon EventBridge integration (Docker on EC2)
 
-> **Status: the MQ side and the bridge are tested locally; the AWS side is not yet
-> deployed.**
+> **Status: proven live on EC2 (image `icr.io/ibm-messaging/mq:10.0.0.5-r2`), then destroyed.**
+> The stack was deployed, tested and torn down (verified clean) in the lab account. Rebuild it with
+> `deploy.sh --yes [--global-endpoint]`.
 >
-> | Proven (locally, against the real pinned image `icr.io/ibm-messaging/mq:10.0.0.5-r2`) | Not proven until a real deploy |
+> | Proven | Not proven / not covered |
 > |---|---|
-> | QM1 starts and turns healthy; all 38 MQSC commands load with 0 errors | EC2 boot: `user_data`, Docker + Compose install, bundle download |
-> | Queue manager, queues, channel, auth objects exist with the right attributes (`verify-mq-objects.sh`, 29 checks) | The bridge **image build** inside Docker (the IBM client download URL and `ibmmq` build were verified on the host, not in `docker build`) |
-> | Client login through `APP.SVRCONN`: `app` works, wrong password refused, `admin` blocked | IAM/KMS permissions on the instance role; SQS and rule delivery; `mq-outbound-rule` pattern |
-> | The bridge's `MQClient` and both delivery loops against real MQ (`bridge/tests/live_*_check.py`, 17 checks) | End-to-end through real EventBridge (`scripts/test.sh`) |
->
-> Re-run the local proof any time, with no AWS and no cost: `scripts/local-mq-check.sh`.
+> | **MQ -> EventBridge** (`ORDERS.OUT` -> bridge -> bus -> existing consumer Lambda), commit only after a successful publish | **EventBridge -> MQ for events published through the global endpoint** (the test publishes on the regional bus) |
+> | **EventBridge -> SQS -> MQ** (`ORDERS.IN`), SQS deleted only after the MQ commit (`scripts/test.sh`, 18 checks) | **EventBridge -> MQ during a regional failover**: the rule and SQS queue exist only in `us-east-1` ([details](docs/RESILIENCE_AND_LIMITATIONS.md)) |
+> | Loop guard (`origin: ibm-mq` does not come back); poison message -> `ORDERS.DLQ` without blocking the next | **A whole `us-east-1` outage**: the single MQ host is there too. Deferred by design: production MQ is a separate HA deployment ([how to plug it in](docs/PRODUCTION_MQ_CLUSTER.md)) |
+> | **Global endpoint:** MQ orders replicate to `us-west-2`; failover (primary Unhealthy after 97 s, order received natively in `us-west-2` 104 s later, bridge **not** restarted) and fail back (`scripts/test-global-endpoint.sh --failover --confirm`) | TLS on the MQ channel; load/soak; MQ Native HA or a uniform cluster (nothing here was run against one) |
+> | 38 object/host/login checks on the live instance (`scripts/verify-mq-objects.sh --smoke`); the same checks locally with no AWS (`scripts/local-mq-check.sh`) | Data durability: queued MQ messages live on the instance disk and are lost when the instance is replaced |
 
 ## What this is and why
 
@@ -188,20 +188,28 @@ mq-integration/
     ├── SECURITY.md              # threat model, TLS gap and how to close it
     ├── RUNBOOK.md               # day-2 operations, what each test proves
     ├── AWS_CLI_AND_MQ_COMMANDS.md   # hands-on cookbook
-    └── TROUBLESHOOTING.md       # symptom -> cause -> check -> fix
+    ├── TROUBLESHOOTING.md       # symptom -> cause -> check -> fix
+    ├── RESILIENCE_AND_LIMITATIONS.md   # what survives which failure, what is deferred and why
+    ├── PRODUCTION_MQ_CLUSTER.md        # plug the bridge into a separate Native HA / uniform-cluster MQ
+    ├── BRIDGE_PRODUCTION_ROADMAP.md    # bridge code changes needed for that (not implemented)
+    ├── PRODUCTION_VERIFICATION_CHECKLIST.md   # prove a production MQ + bridge to the lab's bar
+    └── examples/20-eventbridge-cluster.mqsc.example   # UNTESTED production MQSC template
 ```
 
 ## Known limits (honest)
 
-- Single instance, single queue manager: no high availability. This is a lab,
-  not a production MQ deployment.
+- **Lab, not production MQ.** One instance, one queue manager, one AZ: no high availability. Queued messages
+  live on the instance disk and are **lost when Terraform replaces the instance** (any change to the bundle or
+  `user_data`; this happened three times during testing). In production MQ is expected to be a separate natively
+  highly available / uniform-cluster deployment that the bridge plugs into: see
+  [`docs/PRODUCTION_MQ_CLUSTER.md`](docs/PRODUCTION_MQ_CLUSTER.md) and the code changes it needs in
+  [`docs/BRIDGE_PRODUCTION_ROADMAP.md`](docs/BRIDGE_PRODUCTION_ROADMAP.md) (not implemented).
+- **Regional resilience:** MQ -> EventBridge survives an EventBridge regional failover (tested). EventBridge -> MQ
+  does not (no rule/queue in `us-west-2`), and a whole `us-east-1` outage takes the MQ host and bridge down. The
+  deferred design and the full scenario table are in [`docs/RESILIENCE_AND_LIMITATIONS.md`](docs/RESILIENCE_AND_LIMITATIONS.md).
 - No TLS on the MQ channel (see [`docs/SECURITY.md`](docs/SECURITY.md)).
-- `mq-outbound-rule` matches events whose `detail.origin` is absent OR not
-  `ibm-mq` (anti-loop). The pattern follows the EventBridge docs but has not been
-  exercised on a live bus yet.
-- The EC2 deployment and the AWS side (instance role, SQS, rule, end-to-end through
-  real EventBridge) have not run yet. See the status table at the top.
-- The MQ image runs unprivileged and has no OS users or groups; `app`/`admin` are
-  virtual users and rights are granted to the user name. `MQ_APP_PASSWORD` /
-  `MQ_ADMIN_PASSWORD` as environment variables are flagged "deprecated" by the image
-  in favour of Docker secrets; they work in 10.0.0.5-r2 (tested) but may not forever.
+- `mq-outbound-rule` matches events whose `detail.origin` is absent OR not `ibm-mq` (anti-loop). Tested live for
+  events published on the regional bus.
+- The MQ image runs unprivileged and has no OS users or groups; `app`/`admin` are virtual users and rights are
+  granted to the user name. `MQ_APP_PASSWORD` / `MQ_ADMIN_PASSWORD` as environment variables are flagged
+  "deprecated" by the image in favour of Docker secrets; they work in 10.0.0.5-r2 (tested) but may not forever.
